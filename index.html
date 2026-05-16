@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Samuel Maclar - full-stack developer, cybersecurity student, AI builder, and CEO of Radiant InnovaTech."
+    />
+    <title>Samuel Maclar | Full-Stack Developer & Cybersecurity Builder</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="ambient-grid" aria-hidden="true"></div>
+    <div class="cursor-glow" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="brand" href="#home" aria-label="Samuel Maclar home">
+        <span class="brand-mark">SM</span>
+        <span>Samuel Maclar</span>
+      </a>
+
+      <button class="nav-toggle" type="button" aria-label="Open navigation" aria-expanded="false">
+        <i data-lucide="menu"></i>
+      </button>
+
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a href="#about">About</a>
+        <a href="#projects">Projects</a>
+        <a href="#stack">Stack</a>
+        <a href="#contact">Contact</a>
+      </nav>
+
+      <button class="theme-toggle" type="button" aria-label="Switch to light theme">
+        <i data-lucide="sun"></i>
+        <span>Theme</span>
+      </button>
+    </header>
+
+    <main>
+      <section class="hero section" id="home">
+        <div class="hero-content reveal">
+          <p class="eyebrow">Full-stack developer · Cybersecurity enthusiast · Founder</p>
+          <h1>Building secure, useful software from Ghana to the world.</h1>
+          <p class="hero-copy">
+            I am Samuel Maclar, a final-year Cyber Security student at UMaT and CEO of Radiant
+            InnovaTech. I build fast, practical platforms across web systems, AI assistants,
+            business tools, and security-focused products.
+          </p>
+
+          <div class="hero-actions" aria-label="Primary actions">
+            <a class="button primary" href="#projects">
+              <i data-lucide="rocket"></i>
+              View Projects
+            </a>
+            <a class="button secondary" href="#contact">
+              <i data-lucide="send"></i>
+              Contact Me
+            </a>
+          </div>
+
+          <div class="social-strip" aria-label="Social links">
+            <a href="https://github.com/RadiantSeraph1" target="_blank" rel="noreferrer">GitHub</a>
+            <a
+              href="https://www.linkedin.com/in/samuel-maclar-1a0793250"
+              target="_blank"
+              rel="noreferrer"
+              >LinkedIn</a
+            >
+            <a href="https://x.com/SamuelMaclar" target="_blank" rel="noreferrer">X</a>
+            <a href="https://www.instagram.com/samuel.maclar/" target="_blank" rel="noreferrer"
+              >Instagram</a
+            >
+          </div>
+        </div>
+
+        <div class="hero-visual reveal">
+          <div class="portrait-shell">
+            <img
+              src="https://github.com/RadiantSeraph1.png?size=520"
+              alt="Samuel Maclar"
+              class="portrait"
+            />
+            <div class="portrait-card status-card">
+              <span class="status-dot"></span>
+              <span>Open to remote collaboration</span>
+            </div>
+            <div class="portrait-card stack-card">
+              <span>FastAPI</span>
+              <span>React</span>
+              <span>STRIDE</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section split-section" id="about">
+        <div class="section-heading reveal">
+          <p class="eyebrow">About</p>
+          <h2>Developer mindset, security discipline, founder execution.</h2>
+        </div>
+        <div class="about-panel reveal">
+          <p>
+            I am a final-year Cyber Security student at the University of Mines and Technology,
+            Tarkwa, Ghana, and CEO of
+            <a href="https://radiantinnovatech.com" target="_blank" rel="noreferrer"
+              >Radiant InnovaTech</a
+            >.
+          </p>
+          <p>
+            My work sits at the intersection of full-stack development and cybersecurity. I enjoy
+            shipping software that is fast, secure, maintainable, and genuinely useful for the
+            people using it.
+          </p>
+        </div>
+      </section>
+
+      <section class="section focus-section" aria-labelledby="focus-title">
+        <div class="section-heading reveal">
+          <p class="eyebrow">Focus</p>
+          <h2 id="focus-title">What I build</h2>
+        </div>
+        <div class="focus-grid">
+          <article class="focus-card reveal">
+            <i data-lucide="layout-dashboard"></i>
+            <h3>Full-stack platforms</h3>
+            <p>Responsive frontends, APIs, dashboards, auth flows, and business workflows.</p>
+          </article>
+          <article class="focus-card reveal">
+            <i data-lucide="shield-check"></i>
+            <h3>Cybersecurity and GRC</h3>
+            <p>Threat modelling, STRIDE workflows, secure design, OWASP-aware delivery.</p>
+          </article>
+          <article class="focus-card reveal">
+            <i data-lucide="bot"></i>
+            <h3>AI assistants</h3>
+            <p>Conversational tools with FastAPI, LangGraph, Claude API, memory, and automation.</p>
+          </article>
+          <article class="focus-card reveal">
+            <i data-lucide="briefcase-business"></i>
+            <h3>Founder-led tooling</h3>
+            <p>Internal systems and client-facing products through Radiant InnovaTech.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section projects-section" id="projects">
+        <div class="section-heading reveal">
+          <p class="eyebrow">Featured Projects</p>
+          <h2>Systems, tools, and experiments with practical direction.</h2>
+        </div>
+
+        <div class="project-grid">
+          <article class="project-card featured reveal">
+            <div class="project-topline">
+              <span class="project-kind">Business System</span>
+              <a href="https://github.com/RadiantSeraph1/POS" target="_blank" rel="noreferrer">
+                <i data-lucide="external-link"></i>
+              </a>
+            </div>
+            <h3>POS</h3>
+            <p>A TypeScript point-of-sale system focused on practical sales and business operations.</p>
+            <div class="tag-row"><span>TypeScript</span><span>POS</span><span>Operations</span></div>
+          </article>
+
+          <article class="project-card featured reveal">
+            <div class="project-topline">
+              <span class="project-kind">Hospitality</span>
+              <a href="https://github.com/RadiantSeraph1/hotel" target="_blank" rel="noreferrer">
+                <i data-lucide="external-link"></i>
+              </a>
+            </div>
+            <h3>hotel</h3>
+            <p>A hotel system and website for hospitality workflows and public-facing presence.</p>
+            <div class="tag-row"><span>Hotel</span><span>Website</span><span>System</span></div>
+          </article>
+
+          <article class="project-card featured reveal">
+            <div class="project-topline">
+              <span class="project-kind">Management</span>
+              <a href="https://github.com/RadiantSeraph1/EMS" target="_blank" rel="noreferrer">
+                <i data-lucide="external-link"></i>
+              </a>
+            </div>
+            <h3>EMS</h3>
+            <p>An employee management system for staff records and administrative workflows.</p>
+            <div class="tag-row"><span>Employees</span><span>Admin</span><span>Management</span></div>
+          </article>
+
+          <article class="project-card reveal">
+            <div class="project-topline">
+              <span class="project-kind">Cybersecurity AI</span>
+              <span class="project-status">FYP</span>
+            </div>
+            <h3>GRC Auditor</h3>
+            <p>A STRIDE-based conversational threat modelling assistant for governance, risk, and compliance workflows.</p>
+            <div class="tag-row"><span>STRIDE</span><span>GRC</span><span>Threat Modelling</span></div>
+          </article>
+
+          <article class="project-card reveal">
+            <div class="project-topline">
+              <span class="project-kind">Personal AI</span>
+              <span class="project-status">In progress</span>
+            </div>
+            <h3>Ray AI Assistant</h3>
+            <p>A Jarvis-inspired personal assistant built with FastAPI, LangGraph, Claude API, and automation workflows.</p>
+            <div class="tag-row"><span>FastAPI</span><span>LangGraph</span><span>Claude API</span></div>
+          </article>
+
+          <article class="project-card reveal">
+            <div class="project-topline">
+              <span class="project-kind">Company</span>
+              <a href="https://radiantinnovatech.com" target="_blank" rel="noreferrer">
+                <i data-lucide="external-link"></i>
+              </a>
+            </div>
+            <h3>Radiant InnovaTech</h3>
+            <p>A technology firm building internal tooling and client-facing platforms from Tarkwa, Ghana.</p>
+            <div class="tag-row"><span>Founder</span><span>Platforms</span><span>Clients</span></div>
+          </article>
+        </div>
+
+        <div class="repo-strip reveal" aria-label="More GitHub repositories">
+          <a href="https://github.com/RadiantSeraph1/charity-website" target="_blank" rel="noreferrer">charity-website</a>
+          <a href="https://github.com/RadiantSeraph1/e-commerce-platform" target="_blank" rel="noreferrer">e-commerce-platform</a>
+          <a href="https://github.com/RadiantSeraph1/Radiant-Tech-Forums-" target="_blank" rel="noreferrer">Radiant-Tech-Forums</a>
+          <a href="https://github.com/RadiantSeraph1/signup-and-login" target="_blank" rel="noreferrer">signup-and-login</a>
+          <a href="https://github.com/RadiantSeraph1/login-app" target="_blank" rel="noreferrer">login-app</a>
+          <a href="https://github.com/RadiantSeraph1/my-portfolio" target="_blank" rel="noreferrer">my-portfolio</a>
+        </div>
+      </section>
+
+      <section class="section stack-section" id="stack">
+        <div class="section-heading reveal">
+          <p class="eyebrow">Tech Stack</p>
+          <h2>Tools I use to ship full-stack and security-aware products.</h2>
+        </div>
+
+        <div class="stack-board reveal">
+          <div class="stack-group">
+            <h3>Frontend</h3>
+            <div class="chip-row"><span>HTML5</span><span>CSS3</span><span>JavaScript</span><span>React</span><span>Vite</span></div>
+          </div>
+          <div class="stack-group">
+            <h3>Backend and Databases</h3>
+            <div class="chip-row"><span>Node.js</span><span>FastAPI</span><span>PHP</span><span>PostgreSQL</span><span>MySQL</span></div>
+          </div>
+          <div class="stack-group">
+            <h3>AI</h3>
+            <div class="chip-row"><span>LangChain</span><span>LangGraph</span><span>ChromaDB</span><span>Claude API</span></div>
+          </div>
+          <div class="stack-group">
+            <h3>Infrastructure and Security</h3>
+            <div class="chip-row"><span>AWS EC2</span><span>Nginx</span><span>Docker</span><span>Git</span><span>Burp Suite</span><span>Ghidra</span><span>OWASP</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section leadership-section">
+        <div class="leadership-card reveal">
+          <p class="eyebrow">Radiant InnovaTech</p>
+          <h2>Founder building useful systems for real operations.</h2>
+          <p>
+            As CEO of Radiant InnovaTech, I focus on internal tooling, client-facing platforms,
+            secure workflows, and software that helps organizations move faster with more confidence.
+          </p>
+          <a class="button secondary" href="https://radiantinnovatech.com" target="_blank" rel="noreferrer">
+            <i data-lucide="globe-2"></i>
+            Visit Radiant InnovaTech
+          </a>
+        </div>
+      </section>
+
+      <section class="section contact-section" id="contact">
+        <div class="section-heading reveal">
+          <p class="eyebrow">Let's Connect</p>
+          <h2>Have a project, role, or collaboration in mind?</h2>
+          <p class="section-copy">
+            I am based in Ghana and open to remote collaboration across full-stack development,
+            cybersecurity tooling, AI assistants, and business systems.
+          </p>
+        </div>
+        <div class="contact-grid reveal">
+          <a href="https://www.linkedin.com/in/samuel-maclar-1a0793250" target="_blank" rel="noreferrer">
+            <i data-lucide="linkedin"></i>
+            LinkedIn
+          </a>
+          <a href="https://github.com/RadiantSeraph1" target="_blank" rel="noreferrer">
+            <i data-lucide="github"></i>
+            GitHub
+          </a>
+          <a href="https://x.com/SamuelMaclar" target="_blank" rel="noreferrer">
+            <i data-lucide="twitter"></i>
+            X / Twitter
+          </a>
+          <a href="https://www.instagram.com/samuel.maclar/" target="_blank" rel="noreferrer">
+            <i data-lucide="instagram"></i>
+            Instagram
+          </a>
+          <a href="https://web.facebook.com/nanakweku.abekamaclar" target="_blank" rel="noreferrer">
+            <i data-lucide="facebook"></i>
+            Facebook
+          </a>
+          <a href="mailto:samuelmaclar@radiantinnovatech.com">
+            <i data-lucide="mail"></i>
+            Email
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>Samuel Maclar</span>
+      <span>Full-stack development · Cybersecurity · AI systems</span>
+    </footer>
+
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script src="script.js"></script>
+  </body>
+</html>
