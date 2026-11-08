@@ -1101,3 +1101,20 @@ h3 {
 .show-all .icon-slot {
   display: inline-flex;
 }
+
+.tile-note {
+  margin: 1rem 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-style: italic;
+}
+
+.tile-wide .tile-flow {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 660px) {
+  .tile-wide .tile-flow {
+    grid-template-columns: 1fr;
+  }
+}
