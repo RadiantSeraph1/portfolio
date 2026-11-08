@@ -8,7 +8,6 @@ const sections = navLinks
   .filter(Boolean);
 
 const storedTheme = localStorage.getItem("samuel-portfolio-theme");
-const preferredTheme = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 
 function applyTheme(theme) {
   root.dataset.theme = theme;
@@ -26,7 +25,7 @@ function applyTheme(theme) {
   }
 }
 
-applyTheme(storedTheme || preferredTheme);
+applyTheme(storedTheme || "dark");
 
 themeToggle?.addEventListener("click", () => {
   applyTheme(root.dataset.theme === "dark" ? "light" : "dark");
@@ -84,11 +83,6 @@ const navObserver = new IntersectionObserver(
 );
 
 sections.forEach((section) => navObserver.observe(section));
-
-window.addEventListener("pointermove", (event) => {
-  root.style.setProperty("--mouse-x", `${event.clientX}px`);
-  root.style.setProperty("--mouse-y", `${event.clientY}px`);
-});
 
 if (window.lucide) {
   window.lucide.createIcons();

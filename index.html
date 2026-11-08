@@ -5,7 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Samuel Maclar - full-stack developer, cybersecurity student, AI builder, and CEO of Radiant InnovaTech."
+      content="Samuel Maclar - full-stack developer, cybersecurity graduate, AI builder, and CEO and Founder of Radiant InnovaTech."
+    />
+    <meta name="theme-color" content="#14120f" />
+    <meta property="og:title" content="Samuel Maclar | Full-Stack Developer & Cybersecurity Builder" />
+    <meta property="og:description" content="Full-stack developer, cybersecurity graduate, AI builder, and CEO and Founder of Radiant InnovaTech." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://samuelmaclar.com" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23d9a441'/%3E%3Cstop offset='1' stop-color='%23d9a441'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='32' cy='32' r='32' fill='url(%23g)'/%3E%3Ctext x='32' y='41' font-family='monospace' font-size='26' font-weight='700' text-anchor='middle' fill='white'%3ESM%3C/text%3E%3C/svg%3E"
     />
     <title>Samuel Maclar | Full-Stack Developer & Cybersecurity Builder</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -17,9 +26,6 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div class="ambient-grid" aria-hidden="true"></div>
-    <div class="cursor-glow" aria-hidden="true"></div>
-
     <header class="site-header">
       <a class="brand" href="#home" aria-label="Samuel Maclar home">
         <span class="brand-mark">SM</span>
@@ -46,11 +52,11 @@
     <main>
       <section class="hero section" id="home">
         <div class="hero-content reveal">
-          <p class="eyebrow">Full-stack developer · Cybersecurity enthusiast · Founder</p>
+          <p class="eyebrow">Full-stack developer · Cybersecurity graduate · Founder</p>
           <h1>Building secure, useful software from Ghana to the world.</h1>
           <p class="hero-copy">
-            I am Samuel Maclar, a final-year Cyber Security student at UMaT and CEO of Radiant
-            InnovaTech. I build fast, practical platforms across web systems, AI assistants,
+            I am Samuel Maclar, a Cyber Security graduate of UMaT doing my National Service at
+            Telecel Ghana, and CEO and Founder of Radiant InnovaTech. I build fast, practical platforms across web systems, AI assistants,
             business tools, and security-focused products.
           </p>
 
@@ -64,6 +70,11 @@
               Contact Me
             </a>
           </div>
+
+          <p class="now-strip">
+            <span class="status-dot"></span>
+            <span>Now building: <strong>GRC Guard AI</strong>, <strong>Nova Copilot</strong>, and a forex research lab.</span>
+          </p>
 
           <div class="social-strip" aria-label="Social links">
             <a href="https://github.com/RadiantSeraph1" target="_blank" rel="noreferrer">GitHub</a>
@@ -83,7 +94,9 @@
         <div class="hero-visual reveal">
           <div class="portrait-shell">
             <img
-              src="https://github.com/RadiantSeraph1.png?size=520"
+              src="assets/samuel-maclar.jpg"
+              width="600"
+              height="600"
               alt="Samuel Maclar"
               class="portrait"
             />
@@ -92,9 +105,9 @@
               <span>Open to remote collaboration</span>
             </div>
             <div class="portrait-card stack-card">
+              <span>Next.js</span>
               <span>FastAPI</span>
-              <span>React</span>
-              <span>STRIDE</span>
+              <span>agno</span>
             </div>
           </div>
         </div>
@@ -107,8 +120,8 @@
         </div>
         <div class="about-panel reveal">
           <p>
-            I am a final-year Cyber Security student at the University of Mines and Technology,
-            Tarkwa, Ghana, and CEO of
+            I am a Cyber Security graduate of the University of Mines and Technology, Tarkwa,
+            Ghana, currently doing my National Service at Telecel Ghana, and CEO and Founder of
             <a href="https://radiantinnovatech.com" target="_blank" rel="noreferrer"
               >Radiant InnovaTech</a
             >.
@@ -117,6 +130,11 @@
             My work sits at the intersection of full-stack development and cybersecurity. I enjoy
             shipping software that is fast, secure, maintainable, and genuinely useful for the
             people using it.
+          </p>
+          <p>
+            Lately that means a compliance platform with AI agents, a voice-driven desktop copilot,
+            and small tools for everyday money and business work, all shipped as live demos you can
+            open below.
           </p>
         </div>
       </section>
@@ -130,17 +148,17 @@
           <article class="focus-card reveal">
             <i data-lucide="layout-dashboard"></i>
             <h3>Full-stack platforms</h3>
-            <p>Responsive frontends, APIs, dashboards, auth flows, and business workflows.</p>
+            <p>Responsive frontends, APIs, dashboards, auth flows, and business workflows in React, Next.js, and TypeScript.</p>
           </article>
           <article class="focus-card reveal">
             <i data-lucide="shield-check"></i>
             <h3>Cybersecurity and GRC</h3>
-            <p>Threat modelling, STRIDE workflows, secure design, OWASP-aware delivery.</p>
+            <p>Compliance automation, control mapping, threat modelling, secure design, OWASP-aware delivery.</p>
           </article>
           <article class="focus-card reveal">
             <i data-lucide="bot"></i>
             <h3>AI assistants</h3>
-            <p>Conversational tools with FastAPI, LangGraph, Claude API, memory, and automation.</p>
+            <p>Agents and copilots with FastAPI, agno, LangGraph, Claude and Gemini APIs, RAG, and automation.</p>
           </article>
           <article class="focus-card reveal">
             <i data-lucide="briefcase-business"></i>
@@ -157,92 +175,67 @@
         </div>
 
         <div class="project-grid">
-          <article class="project-card featured reveal">
-            <div class="project-topline">
-              <span class="project-kind">Business System</span>
-              <a href="https://github.com/RadiantSeraph1/POS" target="_blank" rel="noreferrer">
-                <i data-lucide="external-link"></i>
-              </a>
-            </div>
-            <h3>POS</h3>
-            <p>A TypeScript point-of-sale system focused on practical sales and business operations.</p>
-            <div class="tag-row"><span>TypeScript</span><span>POS</span><span>Operations</span></div>
-          </article>
-
-          <article class="project-card featured reveal">
-            <div class="project-topline">
-              <span class="project-kind">Security Tooling</span>
-              <a href="https://github.com/RadiantSeraph1/phishing-detector" target="_blank" rel="noreferrer">
-                <i data-lucide="external-link"></i>
-              </a>
-            </div>
-            <h3>phishing-detector</h3>
-            <p>A JavaScript security project for detecting suspicious phishing signals and unsafe links.</p>
-            <div class="tag-row"><span>JavaScript</span><span>Security</span><span>Phishing</span></div>
-          </article>
-
-          <article class="project-card featured reveal">
-            <div class="project-topline">
-              <span class="project-kind">Secure Storage</span>
-              <a href="https://github.com/RadiantSeraph1/filevault" target="_blank" rel="noreferrer">
-                <i data-lucide="external-link"></i>
-              </a>
-            </div>
-            <h3>filevault</h3>
-            <p>A TypeScript vault-style project focused on secure file handling and protected data workflows.</p>
-            <div class="tag-row"><span>TypeScript</span><span>File Security</span><span>Vault</span></div>
-          </article>
-
-          <article class="project-card featured reveal">
-            <div class="project-topline">
-              <span class="project-kind">Hospitality</span>
-              <a href="https://github.com/RadiantSeraph1/hotel" target="_blank" rel="noreferrer">
-                <i data-lucide="external-link"></i>
-              </a>
-            </div>
-            <h3>hotel</h3>
-            <p>A hotel system and website for hospitality workflows and public-facing presence.</p>
-            <div class="tag-row"><span>Hotel</span><span>Website</span><span>System</span></div>
-          </article>
-
-          <article class="project-card featured reveal">
-            <div class="project-topline">
-              <span class="project-kind">Hospitality 2.0</span>
-              <a href="https://github.com/RadiantSeraph1/hotel2.0" target="_blank" rel="noreferrer">
-                <i data-lucide="external-link"></i>
-              </a>
-            </div>
-            <h3>hotel2.0</h3>
-            <p>A newer TypeScript iteration of the hotel platform with a stronger system foundation.</p>
-            <div class="tag-row"><span>TypeScript</span><span>Hospitality</span><span>Platform</span></div>
-          </article>
-
-          <article class="project-card featured reveal">
-            <div class="project-topline">
-              <span class="project-kind">Management</span>
-              <a href="https://github.com/RadiantSeraph1/EMS" target="_blank" rel="noreferrer">
-                <i data-lucide="external-link"></i>
-              </a>
-            </div>
-            <h3>EMS</h3>
-            <p>An employee management system for staff records and administrative workflows.</p>
-            <div class="tag-row"><span>Employees</span><span>Admin</span><span>Management</span></div>
-          </article>
-
-          <article class="project-card reveal">
+          <article class="project-card featured reveal tile-lg">
             <div class="project-topline">
               <span class="project-kind">Cybersecurity AI</span>
-              <span class="project-status">FYP</span>
+              <div class="project-links"><span class="project-status is-new">New</span><div class="project-links"><a href="https://github.com/RadiantSeraph1/grc-guard-ai" target="_blank" rel="noreferrer" aria-label="GRC Guard AI on GitHub"><i data-lucide="github"></i></a></div></div>
             </div>
-            <h3>GRC Auditor</h3>
-            <p>A STRIDE-based conversational threat modelling assistant for governance, risk, and compliance workflows.</p>
-            <div class="tag-row"><span>STRIDE</span><span>GRC</span><span>Threat Modelling</span></div>
+            <h3>GRC Guard AI</h3>
+            <p>A governance, risk, and compliance platform that imports frameworks like SOC 2 and ISO 27001, auto-maps controls to live connector checks, and runs agno-powered AI agents with hybrid RAG.</p>
+            <div class="chip-row tile-extra" aria-label="Supported frameworks"><span>SOC 2</span><span>ISO 27001</span><span>NIST CSF</span><span>PCI DSS</span><span>GDPR</span><span>Basel III</span></div>
+            <ul class="tile-flow" aria-label="Connector to control mapping">
+              <li><span>Google Cloud</span><i data-lucide="arrow-right"></i><span>Encryption at rest</span></li>
+              <li><span>Google Workspace</span><i data-lucide="arrow-right"></i><span>MFA enforcement</span></li>
+              <li><span>Apache Fineract</span><i data-lucide="arrow-right"></i><span>Segregation of duties</span></li>
+              <li><span>Wazuh</span><i data-lucide="arrow-right"></i><span>EDR coverage</span></li>
+            </ul>
+            <div class="tag-row"><span>Python</span><span>agno</span><span>RAG</span><span>GRC</span></div>
+          </article>
+
+          <article class="project-card featured reveal">
+            <div class="project-topline">
+              <span class="project-kind">Personal Finance</span>
+              <div class="project-links"><span class="project-status is-new">New</span><div class="project-links"><a href="https://budget-web-app-gilt.vercel.app" target="_blank" rel="noreferrer" aria-label="Budget Planner live demo"><i data-lucide="external-link"></i></a><a href="https://github.com/RadiantSeraph1/budget-web-app" target="_blank" rel="noreferrer" aria-label="Budget Planner on GitHub"><i data-lucide="github"></i></a></div></div>
+            </div>
+            <h3>Budget Planner</h3>
+            <p>A no-build 2027 finance planner: US$ salary to Ghana PAYE and SSNIT take-home, budgets, projections, net worth tracking, and scenario comparison.</p>
+            <div class="tag-row"><span>JavaScript</span><span>Ghana PAYE</span><span>Offline-first</span></div>
+          </article>
+
+          <article class="project-card featured reveal">
+            <div class="project-topline">
+              <span class="project-kind">Business Tool</span>
+              <div class="project-links"><span class="project-status is-new">New</span><div class="project-links"><a href="https://rozzy-receipt.vercel.app" target="_blank" rel="noreferrer" aria-label="Rozzy Receipt live demo"><i data-lucide="external-link"></i></a><a href="https://github.com/RadiantSeraph1/rozzy-receipt" target="_blank" rel="noreferrer" aria-label="Rozzy Receipt on GitHub"><i data-lucide="github"></i></a></div></div>
+            </div>
+            <h3>Rozzy Receipt</h3>
+            <p>A Next.js receipt and document builder with a live preview, saved history, settings, and one-click PDF export.</p>
+            <div class="tag-row"><span>Next.js</span><span>TypeScript</span><span>PDF</span></div>
+          </article>
+
+          <article class="project-card featured reveal tile-wide">
+            <div class="project-topline">
+              <span class="project-kind">Desktop AI</span>
+              <div class="project-links"><a href="https://github.com/RadiantSeraph1/nova-ai-desktop-copilot" target="_blank" rel="noreferrer" aria-label="Nova Desktop Copilot on GitHub"><i data-lucide="github"></i></a></div>
+            </div>
+            <h3>Nova Desktop Copilot</h3>
+            <p>A voice-activated Electron copilot with an animated avatar, mouse and keyboard control, Gemini screen vision, and a global emergency kill switch.</p>
+            <div class="tag-row"><span>Electron</span><span>Gemini</span><span>Voice</span></div>
+          </article>
+
+          <article class="project-card featured reveal tile-wide">
+            <div class="project-topline">
+              <span class="project-kind">Quant Research</span>
+              <div class="project-links"><a href="https://github.com/RadiantSeraph1/agent-trade" target="_blank" rel="noreferrer" aria-label="agent-trade on GitHub"><i data-lucide="github"></i></a></div>
+            </div>
+            <h3>agent-trade</h3>
+            <p>A paper and demo-account forex research lab with a deterministic risk engine, event-driven backtester, and pre-registered experiments. No live trading.</p>
+            <div class="tag-row"><span>Python</span><span>Backtesting</span><span>Risk Engine</span></div>
           </article>
 
           <article class="project-card reveal">
             <div class="project-topline">
               <span class="project-kind">Personal AI</span>
-              <span class="project-status">In progress</span>
+              <div class="project-links"><span class="project-status">In progress</span></div>
             </div>
             <h3>Ray AI Assistant</h3>
             <p>A Jarvis-inspired personal assistant built with FastAPI, LangGraph, Claude API, and automation workflows.</p>
@@ -251,10 +244,58 @@
 
           <article class="project-card reveal">
             <div class="project-topline">
+              <span class="project-kind">Business System</span>
+              <div class="project-links"><a href="https://github.com/RadiantSeraph1/POS" target="_blank" rel="noreferrer" aria-label="POS on GitHub"><i data-lucide="github"></i></a></div>
+            </div>
+            <h3>POS</h3>
+            <p>A TypeScript point-of-sale system focused on practical sales and business operations.</p>
+            <div class="tag-row"><span>TypeScript</span><span>POS</span><span>Operations</span></div>
+          </article>
+
+          <article class="project-card reveal">
+            <div class="project-topline">
+              <span class="project-kind">Secure Storage</span>
+              <div class="project-links"><a href="https://filevault-chi.vercel.app" target="_blank" rel="noreferrer" aria-label="filevault live demo"><i data-lucide="external-link"></i></a><a href="https://github.com/RadiantSeraph1/filevault" target="_blank" rel="noreferrer" aria-label="filevault on GitHub"><i data-lucide="github"></i></a></div>
+            </div>
+            <h3>filevault</h3>
+            <p>A TypeScript vault-style project focused on secure file handling and protected data workflows.</p>
+            <div class="tag-row"><span>TypeScript</span><span>File Security</span><span>Vault</span></div>
+          </article>
+
+          <article class="project-card reveal">
+            <div class="project-topline">
+              <span class="project-kind">Security Tooling</span>
+              <div class="project-links"><a href="https://github.com/RadiantSeraph1/phishing-detector" target="_blank" rel="noreferrer" aria-label="phishing-detector on GitHub"><i data-lucide="github"></i></a></div>
+            </div>
+            <h3>phishing-detector</h3>
+            <p>An AI-assisted JavaScript project for spotting suspicious phishing signals and unsafe links.</p>
+            <div class="tag-row"><span>JavaScript</span><span>Security</span><span>Phishing</span></div>
+          </article>
+
+          <article class="project-card reveal">
+            <div class="project-topline">
+              <span class="project-kind">Hospitality</span>
+              <div class="project-links"><a href="https://hotel2-0-seven.vercel.app" target="_blank" rel="noreferrer" aria-label="hotel2.0 live demo"><i data-lucide="external-link"></i></a><a href="https://github.com/RadiantSeraph1/hotel2.0" target="_blank" rel="noreferrer" aria-label="hotel2.0 on GitHub"><i data-lucide="github"></i></a></div>
+            </div>
+            <h3>hotel2.0</h3>
+            <p>A TypeScript hotel platform for hospitality workflows and public-facing presence, the successor to the original hotel site.</p>
+            <div class="tag-row"><span>TypeScript</span><span>Hospitality</span><span>Platform</span></div>
+          </article>
+
+          <article class="project-card reveal">
+            <div class="project-topline">
+              <span class="project-kind">Management</span>
+              <div class="project-links"><a href="https://github.com/RadiantSeraph1/EMS" target="_blank" rel="noreferrer" aria-label="EMS on GitHub"><i data-lucide="github"></i></a></div>
+            </div>
+            <h3>EMS</h3>
+            <p>An employee management system for staff records and administrative workflows.</p>
+            <div class="tag-row"><span>Employees</span><span>Admin</span><span>Management</span></div>
+          </article>
+
+          <article class="project-card reveal tile-banner">
+            <div class="project-topline">
               <span class="project-kind">Company</span>
-              <a href="https://radiantinnovatech.com" target="_blank" rel="noreferrer">
-                <i data-lucide="external-link"></i>
-              </a>
+              <div class="project-links"><a href="https://radiantinnovatech.com" target="_blank" rel="noreferrer" aria-label="Radiant InnovaTech live demo"><i data-lucide="external-link"></i></a></div>
             </div>
             <h3>Radiant InnovaTech</h3>
             <p>A technology firm building internal tooling and client-facing platforms from Tarkwa, Ghana.</p>
@@ -262,7 +303,9 @@
           </article>
         </div>
 
+        <p class="repo-label reveal">More on GitHub</p>
         <div class="repo-strip reveal" aria-label="More GitHub repositories">
+          <a href="https://github.com/RadiantSeraph1/hotel" target="_blank" rel="noreferrer">hotel</a>
           <a href="https://github.com/RadiantSeraph1/portfolio" target="_blank" rel="noreferrer">portfolio</a>
           <a href="https://github.com/RadiantSeraph1/charity-website" target="_blank" rel="noreferrer">charity-website</a>
           <a href="https://github.com/RadiantSeraph1/e-commerce-platform" target="_blank" rel="noreferrer">e-commerce-platform</a>
@@ -282,19 +325,19 @@
         <div class="stack-board reveal">
           <div class="stack-group">
             <h3>Frontend</h3>
-            <div class="chip-row"><span>HTML5</span><span>CSS3</span><span>JavaScript</span><span>React</span><span>Vite</span></div>
+            <div class="chip-row"><span>HTML5</span><span>CSS3</span><span>JavaScript</span><span>React</span><span>Next.js</span><span>TypeScript</span><span>Vite</span><span>Electron</span></div>
           </div>
           <div class="stack-group">
             <h3>Backend and Databases</h3>
-            <div class="chip-row"><span>Node.js</span><span>FastAPI</span><span>PHP</span><span>PostgreSQL</span><span>MySQL</span></div>
+            <div class="chip-row"><span>Node.js</span><span>Python</span><span>FastAPI</span><span>PHP</span><span>PostgreSQL</span><span>MySQL</span></div>
           </div>
           <div class="stack-group">
             <h3>AI</h3>
-            <div class="chip-row"><span>LangChain</span><span>LangGraph</span><span>ChromaDB</span><span>Claude API</span></div>
+            <div class="chip-row"><span>agno</span><span>LangChain</span><span>LangGraph</span><span>ChromaDB</span><span>RAG</span><span>Claude API</span><span>Gemini API</span></div>
           </div>
           <div class="stack-group">
             <h3>Infrastructure and Security</h3>
-            <div class="chip-row"><span>AWS EC2</span><span>Nginx</span><span>Docker</span><span>Git</span><span>Burp Suite</span><span>Ghidra</span><span>OWASP</span></div>
+            <div class="chip-row"><span>AWS EC2</span><span>Vercel</span><span>Nginx</span><span>Docker</span><span>Git</span><span>Burp Suite</span><span>Ghidra</span><span>OWASP</span></div>
           </div>
         </div>
       </section>
@@ -304,7 +347,7 @@
           <p class="eyebrow">Radiant InnovaTech</p>
           <h2>Founder building useful systems for real operations.</h2>
           <p>
-            As CEO of Radiant InnovaTech, I focus on internal tooling, client-facing platforms,
+            As CEO and Founder of Radiant InnovaTech, I focus on internal tooling, client-facing platforms,
             secure workflows, and software that helps organizations move faster with more confidence.
           </p>
           <a class="button secondary" href="https://radiantinnovatech.com" target="_blank" rel="noreferrer">
@@ -357,7 +400,7 @@
       <span>Full-stack development · Cybersecurity · AI systems</span>
     </footer>
 
-    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
     <script src="script.js"></script>
   </body>
 </html>
