@@ -790,3 +790,94 @@ h3 {
     min-height: auto;
   }
 }
+
+/* ---- Refresh: gradient headline, now-strip, project links, status badges ---- */
+.hero h1 {
+  background: linear-gradient(120deg, var(--text) 30%, var(--accent) 70%, var(--warm));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.now-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: fit-content;
+  max-width: 100%;
+  margin: 1.5rem 0 0;
+  padding: 0.55rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.now-strip strong {
+  color: var(--text);
+}
+
+.now-strip .status-dot {
+  flex: 0 0 auto;
+}
+
+.project-links {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.project-links a {
+  transition: border-color 180ms ease, background 180ms ease;
+}
+
+.project-links a:hover {
+  border-color: var(--accent);
+  background: rgba(56, 189, 248, 0.14);
+}
+
+.project-status {
+  align-self: center;
+  white-space: nowrap;
+}
+
+.project-status.is-new {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent-strong), var(--warm));
+  color: #ffffff;
+}
+
+.project-card.featured:hover {
+  border-color: var(--accent);
+  box-shadow: 0 20px 56px rgba(56, 189, 248, 0.16);
+}
+
+.project-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.project-card .tag-row {
+  margin-top: auto;
+  padding-top: 1.2rem;
+}
+
+.repo-label {
+  margin: 2.5rem 0 0.9rem;
+  color: var(--muted);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.repo-label + .repo-strip {
+  margin-top: 0;
+}
+
+@media (max-width: 660px) {
+  .now-strip {
+    border-radius: 18px;
+  }
+}
