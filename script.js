@@ -8,7 +8,6 @@ const sections = navLinks
   .filter(Boolean);
 
 const storedTheme = localStorage.getItem("samuel-portfolio-theme");
-const preferredTheme = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
 
 function applyTheme(theme) {
   root.dataset.theme = theme;
@@ -26,7 +25,7 @@ function applyTheme(theme) {
   }
 }
 
-applyTheme(storedTheme || preferredTheme);
+applyTheme(storedTheme || "dark");
 
 themeToggle?.addEventListener("click", () => {
   applyTheme(root.dataset.theme === "dark" ? "light" : "dark");
@@ -88,6 +87,14 @@ sections.forEach((section) => navObserver.observe(section));
 window.addEventListener("pointermove", (event) => {
   root.style.setProperty("--mouse-x", `${event.clientX}px`);
   root.style.setProperty("--mouse-y", `${event.clientY}px`);
+});
+
+document.querySelectorAll(".project-card, .focus-card").forEach((card) => {
+  card.addEventListener("pointermove", (event) => {
+    const rect = card.getBoundingClientRect();
+    card.style.setProperty("--mx", `${event.clientX - rect.left}px`);
+    card.style.setProperty("--my", `${event.clientY - rect.top}px`);
+  });
 });
 
 if (window.lucide) {
