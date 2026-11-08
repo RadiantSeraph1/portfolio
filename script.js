@@ -1,3 +1,5 @@
+document.documentElement.classList.add("js");
+
 const root = document.documentElement;
 const themeToggle = document.querySelector(".theme-toggle");
 const navToggle = document.querySelector(".nav-toggle");
@@ -83,6 +85,29 @@ const navObserver = new IntersectionObserver(
 );
 
 sections.forEach((section) => navObserver.observe(section));
+
+const projectGrid = document.querySelector("#project-grid");
+const showAll = document.querySelector(".show-all");
+
+if (projectGrid && showAll) {
+  const total = projectGrid.querySelectorAll(".project-card").length;
+  const label = showAll.querySelector(".label");
+  const iconSlot = showAll.querySelector(".icon-slot");
+  label.textContent = `Show all ${total} projects`;
+  showAll.hidden = false;
+
+  showAll.addEventListener("click", () => {
+    const expanded = projectGrid.classList.toggle("is-expanded");
+    showAll.setAttribute("aria-expanded", String(expanded));
+    label.textContent = expanded ? "Show fewer projects" : `Show all ${total} projects`;
+    iconSlot.innerHTML = `<i data-lucide="${expanded ? "chevrons-up" : "chevrons-down"}"></i>`;
+    window.lucide?.createIcons();
+
+    if (!expanded) {
+      document.querySelector("#projects").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  });
+}
 
 if (window.lucide) {
   window.lucide.createIcons();

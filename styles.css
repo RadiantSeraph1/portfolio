@@ -1076,3 +1076,28 @@ h3 {
     min-height: 3.5rem;
   }
 }
+
+/* ---- Show all projects ---- */
+.js .project-grid:not(.is-expanded) .is-extra {
+  display: none;
+}
+
+.show-all-wrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 1.5rem;
+}
+
+.show-all[hidden] {
+  display: none;
+}
+
+@media (max-width: 660px) {
+  .show-all-wrap .button {
+    width: 100%;
+  }
+}
+
+.show-all .icon-slot {
+  display: inline-flex;
+}
