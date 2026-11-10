@@ -1,11 +1,16 @@
 // Vercel serverless function: POST /api/chat
-// Body: { messages: [{ role: "user" | "assistant", content: string }, ...] }
-// Streams the assistant reply back as plain text.
+// Body: { messages: [{ role: "user" | "assistant", content: string }, ...], search?: boolean }
+//
+// Streams newline-delimited JSON events back to the browser:
+//   {"type":"status","value":"thinking" | "searching"}
+//   {"type":"text","value":"..."}            (answer text, in pieces)
+//   {"type":"sources","value":[{title,url}]}  (web pages used, if any)
+//   {"type":"error","value":"..."}           (something went wrong mid-reply)
 //
 // Environment variables (set them in the Vercel project settings):
 //   GROQ_API_KEY  (required) - your key from https://console.groq.com/keys
 //   GROQ_MODEL    (optional) - defaults to openai/gpt-oss-120b
-//                  other options: llama-3.3-70b-versatile, openai/gpt-oss-20b, llama-3.1-8b-instant
+//                  Web search only works with openai/gpt-oss-120b or openai/gpt-oss-20b.
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_MODEL = "openai/gpt-oss-120b";
@@ -18,11 +23,31 @@ const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_REQUESTS = 15;
 const hits = new Map();
 
-const SYSTEM_PROMPT = `You are Radiant AI, a helpful, friendly general-purpose assistant on Samuel Maclar's portfolio website (samuelmaclar.com).
+function systemPrompt(searchEnabled) {
+  const today = new Date().toLocaleDateString("en-GB", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Africa/Accra",
+  });
 
-You can help with anything: coding, writing, explanations, brainstorming, math, and everyday questions. Answer clearly and concisely, and use Markdown (headings, lists, fenced code blocks with a language tag) when it helps readability. Keep casual replies short.
+  return `You are Radiant AI, a helpful, knowledgeable assistant on Samuel Maclar's portfolio website (samuelmaclar.com). Today is ${today}.
 
-If someone asks about the site owner: Samuel Maclar is a full-stack developer and Cyber Security graduate of UMaT (Ghana), doing National Service at Telecel Ghana, and CEO and Founder of Radiant InnovaTech. He builds web systems, AI assistants, business tools, and security-focused products. For anything beyond that, suggest visiting the main portfolio page or contacting Samuel directly rather than guessing.`;
+How to answer:
+- Help with anything: research, coding, writing, explanations, brainstorming, math, and everyday questions.
+- Be accurate. Never invent facts, figures, dates, names, quotes, or links. If you are not sure, say so plainly instead of guessing.
+- ${
+    searchEnabled
+      ? "You can search the web. Use it for anything current, time-sensitive, or specific (companies, people, prices, news, products, statistics, recent events) and base your answer on what you find. Mention where key facts came from."
+      : "You cannot browse the web right now. For current or very specific facts (companies, prices, news, recent events), give what you know, say it may be out of date, and suggest the user turn on web search."
+  }
+- Match length to the question: short and direct for simple questions; well-structured (headings, bullet points, tables) for research or detailed explanations.
+- Use Markdown. Put code in fenced code blocks with a language tag.
+- For research requests, cover the key facts, recent developments, and useful context, then offer to go deeper on a specific angle.
+
+About the site owner (only if asked): Samuel Maclar is a full-stack developer and Cyber Security graduate of UMaT (Ghana), doing National Service at Telecel Ghana, and CEO and Founder of Radiant InnovaTech. He builds web systems, AI assistants, business tools, and security-focused products. For anything beyond that, suggest the main portfolio page or contacting Samuel directly.`;
+}
 
 function json(status, body) {
   return new Response(JSON.stringify(body), {
@@ -43,21 +68,67 @@ function rateLimited(ip) {
 function validate(body) {
   const messages = body?.messages;
   if (!Array.isArray(messages) || messages.length === 0) return "messages must be a non-empty array";
-  if (messages.length > MAX_MESSAGES) return `conversation is too long (max ${MAX_MESSAGES} messages) — start a new chat`;
+  if (messages.length > MAX_MESSAGES) return `This chat is too long (max ${MAX_MESSAGES} messages). Please start a new chat.`;
 
   let total = 0;
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
     if (m?.role !== "user" && m?.role !== "assistant") return "invalid message role";
     if (typeof m.content !== "string" || !m.content.trim()) return "message content must be a non-empty string";
-    if (m.content.length > MAX_CHARS_PER_MESSAGE) return `message is too long (max ${MAX_CHARS_PER_MESSAGE} characters)`;
+    if (m.content.length > MAX_CHARS_PER_MESSAGE) return `Your message is too long (max ${MAX_CHARS_PER_MESSAGE} characters).`;
     const expected = i % 2 === 0 ? "user" : "assistant";
     if (m.role !== expected) return "messages must alternate user/assistant, starting with user";
     total += m.content.length;
   }
   if (messages.at(-1).role !== "user") return "last message must be from the user";
-  if (total > MAX_TOTAL_CHARS) return "conversation is too long — start a new chat";
+  if (total > MAX_TOTAL_CHARS) return "This chat is too long. Please start a new chat.";
   return null;
+}
+
+// Remove gpt-oss citation markers such as 【2†L6-L10】 from the visible answer.
+function stripCitationMarkers(text) {
+  return text.replace(/[ \t]*【[^】]*】/g, "");
+}
+
+// Pull {title, url} pairs out of Groq's executed tool output, whatever shape it arrives in.
+function collectSources(tools, into) {
+  if (!Array.isArray(tools)) return;
+  for (const tool of tools) {
+    const lists = [tool?.search_results?.results, tool?.search_results, tool?.results];
+    for (const list of lists) {
+      if (!Array.isArray(list)) continue;
+      for (const r of list) {
+        const url = typeof r?.url === "string" ? r.url : null;
+        if (!url || !/^https?:\/\//i.test(url) || into.has(url)) continue;
+        into.set(url, { title: String(r.title || url).slice(0, 200), url });
+      }
+    }
+  }
+}
+
+async function callGroq({ apiKey, model, messages, search, signal }) {
+  const isGptOss = model.startsWith("openai/gpt-oss");
+  const payload = {
+    model,
+    messages,
+    stream: true,
+    max_completion_tokens: 8192,
+  };
+  if (isGptOss) payload.reasoning_effort = "medium";
+  if (search && isGptOss) {
+    payload.tools = [{ type: "browser_search" }];
+    payload.tool_choice = "auto";
+  }
+
+  return fetch(GROQ_URL, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(payload),
+    signal,
+  });
 }
 
 export async function POST(request) {
@@ -68,43 +139,41 @@ export async function POST(request) {
 
   const ip = (request.headers.get("x-forwarded-for") || "unknown").split(",")[0].trim();
   if (rateLimited(ip)) {
-    return json(429, { error: "Too many requests — please wait a minute and try again." });
+    return json(429, { error: "You're sending messages too quickly. Please wait a minute and try again." });
   }
 
   let body;
   try {
     body = await request.json();
   } catch {
-    return json(400, { error: "Invalid JSON body" });
+    return json(400, { error: "Invalid request." });
   }
 
   const problem = validate(body);
   if (problem) return json(400, { error: problem });
 
-  const messages = [
-    { role: "system", content: SYSTEM_PROMPT },
+  const model = process.env.GROQ_MODEL || DEFAULT_MODEL;
+  let search = body.search !== false;
+
+  const buildMessages = (withSearch) => [
+    { role: "system", content: systemPrompt(withSearch && model.startsWith("openai/gpt-oss")) },
     ...body.messages.map(({ role, content }) => ({ role, content })),
   ];
 
   let upstream;
   try {
-    upstream = await fetch(GROQ_URL, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: process.env.GROQ_MODEL || DEFAULT_MODEL,
-        messages,
-        stream: true,
-        max_completion_tokens: 8192,
-      }),
-      signal: request.signal,
-    });
+    upstream = await callGroq({ apiKey, model, messages: buildMessages(search), search, signal: request.signal });
+
+    // If web search is rejected (e.g. unsupported model or plan), answer without it rather than failing.
+    if (search && upstream.status === 400) {
+      const detail = await upstream.text().catch(() => "");
+      console.warn("groq rejected search request, retrying without tools:", detail.slice(0, 300));
+      search = false;
+      upstream = await callGroq({ apiKey, model, messages: buildMessages(false), search: false, signal: request.signal });
+    }
   } catch (err) {
     console.error("groq fetch failed:", err?.message);
-    return json(502, { error: "Could not reach the AI service." });
+    return json(502, { error: "Couldn't reach the AI service. Please try again." });
   }
 
   if (!upstream.ok || !upstream.body) {
@@ -112,8 +181,8 @@ export async function POST(request) {
     console.error("groq error:", upstream.status, detail.slice(0, 500));
     const error =
       upstream.status === 429
-        ? "The AI is busy right now — please try again shortly."
-        : "The AI service returned an error.";
+        ? "The AI is busy right now. Please try again in a moment."
+        : "The AI service had a problem answering. Please try again.";
     return json(upstream.status === 429 ? 429 : 502, { error });
   }
 
@@ -123,8 +192,46 @@ export async function POST(request) {
 
   const out = new ReadableStream({
     async start(controller) {
+      const send = (type, value) => controller.enqueue(encoder.encode(JSON.stringify({ type, value }) + "\n"));
+      const sources = new Map();
       let buffer = "";
       let finishReason = null;
+      let status = null;
+      let sentText = false;
+      let pendingText = ""; // holds a possibly-unfinished 【...】 marker between chunks
+
+      const setStatus = (s) => {
+        if (s !== status && !sentText) {
+          status = s;
+          send("status", s);
+        }
+      };
+
+      const emitText = (piece, final = false) => {
+        pendingText += piece;
+        let ready = pendingText;
+        const open = ready.lastIndexOf("【");
+        if (!final && open !== -1 && ready.indexOf("】", open) === -1) {
+          ready = pendingText.slice(0, open);
+          pendingText = pendingText.slice(open);
+        } else {
+          pendingText = "";
+        }
+        if (!final) {
+          // Hold back trailing spaces so a marker in the next chunk can take them with it.
+          const trimmed = ready.replace(/[ \t]+$/, "");
+          pendingText = ready.slice(trimmed.length) + pendingText;
+          ready = trimmed;
+        }
+        ready = stripCitationMarkers(ready);
+        if (ready) {
+          sentText = true;
+          send("text", ready);
+        }
+      };
+
+      setStatus("thinking");
+
       try {
         // Groq streams OpenAI-style server-sent events: "data: {json}\n\n", ending with "data: [DONE]".
         outer: while (true) {
@@ -150,18 +257,31 @@ export async function POST(request) {
             if (chunk.error) throw new Error(chunk.error.message || "stream error");
 
             const choice = chunk.choices?.[0];
-            const text = choice?.delta?.content;
-            if (text) controller.enqueue(encoder.encode(text));
+            const delta = choice?.delta || {};
+
+            if (delta.executed_tools || delta.tool_calls) {
+              setStatus("searching");
+              collectSources(delta.executed_tools, sources);
+            }
+            collectSources(chunk.x_groq?.executed_tools, sources);
+
+            if (typeof delta.content === "string" && delta.content) emitText(delta.content);
             if (choice?.finish_reason) finishReason = choice.finish_reason;
           }
         }
-        if (finishReason === "length") {
-          controller.enqueue(encoder.encode("\n\n_(Response was cut off because it reached the length limit.)_"));
+
+        emitText("", true);
+
+        if (!sentText) {
+          send("error", "The AI didn't return an answer. Please try again.");
+        } else if (finishReason === "length") {
+          send("text", "\n\n_(The answer was cut off because it reached the length limit. Ask me to continue.)_");
         }
+        if (sources.size) send("sources", [...sources.values()].slice(0, 8));
       } catch (err) {
         if (!request.signal?.aborted) {
           console.error("chat stream error:", err?.message);
-          controller.enqueue(encoder.encode("\n\n_Something went wrong while generating a reply._"));
+          send("error", "The connection to the AI was interrupted. Please try again.");
         }
       } finally {
         controller.close();
@@ -174,7 +294,7 @@ export async function POST(request) {
 
   return new Response(out, {
     headers: {
-      "content-type": "text/plain; charset=utf-8",
+      "content-type": "application/x-ndjson; charset=utf-8",
       "cache-control": "no-store",
       "x-content-type-options": "nosniff",
     },

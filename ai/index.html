@@ -64,7 +64,7 @@
             <span class="brand-mark big">AI</span>
             <h2>How can I help you today?</h2>
             <div class="suggestions">
-              <button type="button">Explain how HTTPS keeps my data safe</button>
+              <button type="button">What's the latest news in Ghana tech?</button>
               <button type="button">Write a JavaScript debounce function</button>
               <button type="button">Help me draft a professional email</button>
               <button type="button">What does Samuel Maclar build?</button>
@@ -75,10 +75,16 @@
 
         <form class="composer" id="composer">
           <div class="composer-box">
-            <textarea id="input" rows="1" placeholder="Message Radiant AI" aria-label="Message" maxlength="8000"></textarea>
-            <button class="send" type="submit" aria-label="Send message">
-              <i data-lucide="arrow-up"></i>
-            </button>
+            <textarea id="input" rows="1" placeholder="Ask anything" aria-label="Message" maxlength="8000"></textarea>
+            <div class="composer-row">
+              <button class="tool-toggle" id="search-toggle" type="button" aria-pressed="true" title="Let the AI search the web for current information">
+                <i data-lucide="globe"></i>
+                <span>Web search</span>
+              </button>
+              <button class="send" type="submit" aria-label="Send message">
+                <i data-lucide="arrow-up"></i>
+              </button>
+            </div>
           </div>
           <p class="disclaimer">Radiant AI can make mistakes. Check important info.</p>
         </form>
