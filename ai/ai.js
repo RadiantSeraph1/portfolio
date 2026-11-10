@@ -2,7 +2,9 @@
   const STORE_KEY = "radiant-ai-chats";
   const THEME_KEY = "samuel-portfolio-theme";
   const SEARCH_KEY = "radiant-ai-search";
-  const MAX_SAVED_CHATS = 50;
+  const MAX_SAVED_CHATS = 200;
+  const SYNC_TOKEN_KEY = "radiant-ai-sync-token";
+  const SYNC_STATE_KEY = "radiant-ai-sync-state";
 
   const $ = (sel) => document.querySelector(sel);
   const root = document.documentElement;
@@ -45,6 +47,7 @@
       chats = chats.slice(0, MAX_SAVED_CHATS);
       localStorage.setItem(STORE_KEY, JSON.stringify(chats));
     } catch {}
+    scheduleSync();
   }
 
   // ---------- icons / theme / search toggle ----------
@@ -316,6 +319,9 @@
   function deleteChat(id) {
     if (!confirm("Delete this chat?")) return;
     chats = chats.filter((c) => c.id !== id);
+    syncState.deleted[id] = Date.now();
+    delete syncState.pushed[id];
+    saveSyncState();
     save();
     if (current?.id === id) newChat();
     else renderSidebar();
@@ -673,11 +679,224 @@
     if (e.key === "Escape") closeSidebar();
   });
 
+  // ---------- sync across devices (owner only) ----------
+  const syncBtn = $("#sync-btn");
+  const syncDialog = $("#sync-dialog");
+  const syncForm = $("#sync-form");
+  const syncPassword = $("#sync-password");
+  const syncError = $("#sync-error");
+  const SYNC_INTERVAL_MS = 60_000;
+
+  let syncToken = null;
+  try {
+    syncToken = localStorage.getItem(SYNC_TOKEN_KEY);
+  } catch {}
+
+  /** pushed: {chatId: updated} last version the server has; deleted: {chatId: time} not yet sent. */
+  let syncState = { pushed: {}, deleted: {} };
+  try {
+    syncState = { pushed: {}, deleted: {}, ...JSON.parse(localStorage.getItem(SYNC_STATE_KEY) || "{}") };
+  } catch {}
+
+  function saveSyncState() {
+    try {
+      localStorage.setItem(SYNC_STATE_KEY, JSON.stringify(syncState));
+    } catch {}
+  }
+
+  let syncTimer = 0;
+  let syncing = null;
+  let syncAgain = false;
+  let syncProblem = "";
+
+  function renderSyncButton() {
+    const on = Boolean(syncToken);
+    syncBtn.classList.toggle("is-on", on);
+    const icon = !on ? "cloud-off" : syncProblem ? "cloud-alert" : syncing ? "refresh-cw" : "cloud";
+    const text = !on ? "Sync chats" : syncProblem ? "Sync paused" : syncing ? "Syncing…" : "Synced · Sign out";
+    syncBtn.innerHTML = `<i data-lucide="${icon}"></i><span>${text}</span>`;
+    syncBtn.title = !on
+      ? "Sign in to sync your chats across devices"
+      : syncProblem
+        ? `${syncProblem} Click to sign out.`
+        : "Your chats sync across devices. Click to sign out on this device.";
+    icons();
+  }
+
+  function scheduleSync(delay = 1500) {
+    if (!syncToken) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => syncNow(), delay);
+  }
+
+  async function syncFetch(method, body) {
+    const res = await fetch("/api/sync", {
+      method,
+      headers: { authorization: `Bearer ${syncToken}`, ...(body ? { "content-type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      signOut("Your sync sign-in expired. Please sign in again.");
+      throw new Error("signed out");
+    }
+    if (!res.ok) throw new Error(data.error || `Sync failed (${res.status}).`);
+    return data;
+  }
+
+  /** Push local changes, then pull and merge everything from the server. */
+  async function syncNow() {
+    if (!syncToken) return;
+    if (syncing) {
+      syncAgain = true;
+      return syncing;
+    }
+    syncing = (async () => {
+      renderSyncButton();
+      try {
+        // 1. Push: chats changed since the server last saw them, and deletions.
+        const upsert = chats.filter((c) => c.messages.length && (syncState.pushed[c.id] || 0) < c.updated);
+        const del = Object.entries(syncState.deleted).map(([id, at]) => ({ id, at }));
+        for (let i = 0; i < Math.max(upsert.length, del.length); i += 50) {
+          const batch = { upsert: upsert.slice(i, i + 50), delete: del.slice(i, i + 50) };
+          await syncFetch("POST", batch);
+          batch.upsert.forEach((c) => (syncState.pushed[c.id] = c.updated));
+          batch.delete.forEach((d) => delete syncState.deleted[d.id]);
+          saveSyncState();
+        }
+
+        // 2. Pull and merge: the newest version of each chat wins.
+        const remote = await syncFetch("GET");
+        mergeRemote(remote);
+        syncProblem = "";
+      } catch (err) {
+        if (syncToken) syncProblem = navigator.onLine ? err.message : "You're offline. Chats will sync when you reconnect.";
+      } finally {
+        syncing = null;
+        renderSyncButton();
+        if (syncAgain) {
+          syncAgain = false;
+          scheduleSync(300);
+        }
+      }
+    })();
+    return syncing;
+  }
+
+  function mergeRemote({ chats: remoteChats = [], deleted = {} }) {
+    let changed = false;
+    let currentChanged = false;
+    const busyChat = controller ? current : null; // never replace a chat while it's answering
+    const byId = new Map(chats.map((c) => [c.id, c]));
+
+    for (const r of remoteChats) {
+      if (!r?.id || r === busyChat) continue;
+      const local = byId.get(r.id);
+      if (local === busyChat && local) continue;
+      if (!local) {
+        if (syncState.deleted[r.id]) continue;
+        chats.push(r);
+        byId.set(r.id, r);
+        changed = true;
+      } else if (r.updated > local.updated) {
+        Object.assign(local, r);
+        changed = true;
+        if (local === current) currentChanged = true;
+      }
+      syncState.pushed[r.id] = Math.max(syncState.pushed[r.id] || 0, r.updated);
+    }
+
+    for (const [id, at] of Object.entries(deleted)) {
+      const local = byId.get(id);
+      if (!local || local === busyChat || local.updated > at) continue;
+      chats = chats.filter((c) => c.id !== id);
+      delete syncState.pushed[id];
+      changed = true;
+      if (current?.id === id) {
+        current = null;
+        currentChanged = true;
+      }
+    }
+
+    saveSyncState();
+    if (!changed) return;
+    try {
+      chats.sort((a, b) => b.updated - a.updated);
+      localStorage.setItem(STORE_KEY, JSON.stringify(chats.slice(0, MAX_SAVED_CHATS)));
+    } catch {}
+    renderSidebar();
+    if (currentChanged && !controller) renderThread();
+  }
+
+  function signOut(message = "") {
+    syncToken = null;
+    syncProblem = "";
+    try {
+      localStorage.removeItem(SYNC_TOKEN_KEY);
+    } catch {}
+    renderSyncButton();
+    if (message) alert(message);
+  }
+
+  syncBtn.addEventListener("click", () => {
+    if (syncToken) {
+      if (confirm("Stop syncing on this device? Your chats stay saved here and on your other devices.")) signOut();
+      return;
+    }
+    syncError.hidden = true;
+    syncPassword.value = "";
+    closeSidebar();
+    syncDialog.showModal();
+    syncPassword.focus();
+  });
+
+  $("#sync-cancel").addEventListener("click", () => syncDialog.close());
+
+  syncForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const submit = $("#sync-submit");
+    submit.disabled = true;
+    syncError.hidden = true;
+    try {
+      const res = await fetch("/api/sync?action=login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password: syncPassword.value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.token) throw new Error(data.error || `Sign-in failed (${res.status}).`);
+      syncToken = data.token;
+      try {
+        localStorage.setItem(SYNC_TOKEN_KEY, syncToken);
+      } catch {}
+      syncState.pushed = {}; // upload everything on this device the first time
+      saveSyncState();
+      syncDialog.close();
+      syncNow();
+    } catch (err) {
+      syncError.textContent = navigator.onLine ? err.message : "You're offline.";
+      syncError.hidden = false;
+    } finally {
+      submit.disabled = false;
+    }
+  });
+
+  // Keep devices in step: sync when the page is opened/focused, comes back online, and every minute.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") scheduleSync(200);
+  });
+  window.addEventListener("online", () => scheduleSync(200));
+  setInterval(() => {
+    if (document.visibilityState === "visible") syncNow();
+  }, SYNC_INTERVAL_MS);
+
   // ---------- init ----------
   applyTheme(root.dataset.theme === "light" ? "light" : "dark");
   applySearch(searchOn);
   renderSidebar();
   renderThread();
   autosize();
+  renderSyncButton();
+  scheduleSync(300);
   input.focus();
 })();

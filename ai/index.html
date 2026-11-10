@@ -42,6 +42,7 @@
         </button>
         <nav class="chat-list" aria-label="Previous chats"></nav>
         <div class="sidebar-bottom">
+          <button class="side-link sync-btn" id="sync-btn" type="button"><i data-lucide="cloud-off"></i><span>Sync chats</span></button>
           <a class="side-link" href="/"><i data-lucide="arrow-left"></i><span>Back to portfolio</span></a>
           <button class="side-link theme-toggle" type="button"><i data-lucide="sun"></i><span>Theme</span></button>
         </div>
@@ -90,6 +91,20 @@
         </form>
       </main>
     </div>
+
+    <dialog class="sync-dialog" id="sync-dialog" aria-labelledby="sync-title">
+      <form method="dialog" id="sync-form">
+        <h2 id="sync-title">Sync chats across devices</h2>
+        <p class="sync-help">Owner only. Enter the sync password to keep your chats in sync on every device you sign in on.</p>
+        <label for="sync-password">Password</label>
+        <input id="sync-password" type="password" autocomplete="current-password" required />
+        <p class="sync-error" id="sync-error" role="alert" hidden></p>
+        <div class="sync-actions">
+          <button type="button" class="ghost-btn" id="sync-cancel">Cancel</button>
+          <button type="submit" class="retry-btn" id="sync-submit">Sign in</button>
+        </div>
+      </form>
+    </dialog>
 
     <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"></script>

@@ -237,6 +237,82 @@ svg.lucide {
   color: var(--text);
 }
 
+.sync-btn.is-on {
+  color: var(--accent);
+}
+
+.sync-dialog {
+  width: min(92vw, 400px);
+  padding: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  color: var(--text);
+}
+
+.sync-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.sync-dialog h2 {
+  margin: 0 0 0.4rem;
+  font-size: 1.15rem;
+}
+
+.sync-help {
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.sync-dialog label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.sync-dialog input {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.sync-dialog input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.sync-error {
+  margin: 0.6rem 0 0;
+  color: #cf6a4c;
+  font-size: 0.88rem;
+}
+
+.sync-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}
+
+.ghost-btn {
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.ghost-btn:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
 .sidebar-close,
 .sidebar-open,
 .new-chat-mini {
