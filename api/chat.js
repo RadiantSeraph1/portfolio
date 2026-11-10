@@ -1,12 +1,14 @@
-import Anthropic from "@anthropic-ai/sdk";
-
 // Vercel serverless function: POST /api/chat
 // Body: { messages: [{ role: "user" | "assistant", content: string }, ...] }
 // Streams the assistant reply back as plain text.
 //
-// Requires the ANTHROPIC_API_KEY environment variable (set it in the Vercel project settings).
+// Environment variables (set them in the Vercel project settings):
+//   GROQ_API_KEY  (required) - your key from https://console.groq.com/keys
+//   GROQ_MODEL    (optional) - defaults to openai/gpt-oss-120b
+//                  other options: llama-3.3-70b-versatile, openai/gpt-oss-20b, llama-3.1-8b-instant
 
-const MODEL = "claude-opus-5-5";
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+const DEFAULT_MODEL = "openai/gpt-oss-120b";
 const MAX_MESSAGES = 40;
 const MAX_CHARS_PER_MESSAGE = 8000;
 const MAX_TOTAL_CHARS = 60000;
@@ -21,12 +23,6 @@ const SYSTEM_PROMPT = `You are Radiant AI, a helpful, friendly general-purpose a
 You can help with anything: coding, writing, explanations, brainstorming, math, and everyday questions. Answer clearly and concisely, and use Markdown (headings, lists, fenced code blocks with a language tag) when it helps readability. Keep casual replies short.
 
 If someone asks about the site owner: Samuel Maclar is a full-stack developer and Cyber Security graduate of UMaT (Ghana), doing National Service at Telecel Ghana, and CEO and Founder of Radiant InnovaTech. He builds web systems, AI assistants, business tools, and security-focused products. For anything beyond that, suggest visiting the main portfolio page or contacting Samuel directly rather than guessing.`;
-
-let client;
-function getClient() {
-  client ??= new Anthropic();
-  return client;
-}
 
 function json(status, body) {
   return new Response(JSON.stringify(body), {
@@ -65,7 +61,8 @@ function validate(body) {
 }
 
 export async function POST(request) {
-  if (!process.env.ANTHROPIC_API_KEY) {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
     return json(500, { error: "The AI service is not configured yet." });
   }
 
@@ -84,56 +81,98 @@ export async function POST(request) {
   const problem = validate(body);
   if (problem) return json(400, { error: problem });
 
-  const messages = body.messages.map(({ role, content }) => ({ role, content }));
+  const messages = [
+    { role: "system", content: SYSTEM_PROMPT },
+    ...body.messages.map(({ role, content }) => ({ role, content })),
+  ];
+
+  let upstream;
+  try {
+    upstream = await fetch(GROQ_URL, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: process.env.GROQ_MODEL || DEFAULT_MODEL,
+        messages,
+        stream: true,
+        max_completion_tokens: 8192,
+      }),
+      signal: request.signal,
+    });
+  } catch (err) {
+    console.error("groq fetch failed:", err?.message);
+    return json(502, { error: "Could not reach the AI service." });
+  }
+
+  if (!upstream.ok || !upstream.body) {
+    const detail = await upstream.text().catch(() => "");
+    console.error("groq error:", upstream.status, detail.slice(0, 500));
+    const error =
+      upstream.status === 429
+        ? "The AI is busy right now — please try again shortly."
+        : "The AI service returned an error.";
+    return json(upstream.status === 429 ? 429 : 502, { error });
+  }
+
   const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+  const reader = upstream.body.getReader();
 
-  const stream = getClient().beta.messages.stream(
-    {
-      model: MODEL,
-      max_tokens: 16000,
-      system: SYSTEM_PROMPT,
-      output_config: { effort: "low" },
-      // If the model declines on a safety classifier, let the API retry on a fallback model.
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-      messages,
-    },
-    { signal: request.signal }
-  );
-
-  const body$ = new ReadableStream({
+  const out = new ReadableStream({
     async start(controller) {
+      let buffer = "";
+      let finishReason = null;
       try {
-        for await (const event of stream) {
-          if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-            controller.enqueue(encoder.encode(event.delta.text));
+        // Groq streams OpenAI-style server-sent events: "data: {json}\n\n", ending with "data: [DONE]".
+        outer: while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let newline;
+          while ((newline = buffer.indexOf("\n")) !== -1) {
+            const line = buffer.slice(0, newline).trim();
+            buffer = buffer.slice(newline + 1);
+            if (!line.startsWith("data:")) continue;
+
+            const data = line.slice(5).trim();
+            if (data === "[DONE]") break outer;
+
+            let chunk;
+            try {
+              chunk = JSON.parse(data);
+            } catch {
+              continue;
+            }
+            if (chunk.error) throw new Error(chunk.error.message || "stream error");
+
+            const choice = chunk.choices?.[0];
+            const text = choice?.delta?.content;
+            if (text) controller.enqueue(encoder.encode(text));
+            if (choice?.finish_reason) finishReason = choice.finish_reason;
           }
         }
-        const final = await stream.finalMessage();
-        if (final.stop_reason === "refusal") {
-          controller.enqueue(encoder.encode("\n\n_Sorry, I can't help with that request._"));
-        } else if (final.stop_reason === "max_tokens") {
+        if (finishReason === "length") {
           controller.enqueue(encoder.encode("\n\n_(Response was cut off because it reached the length limit.)_"));
         }
       } catch (err) {
         if (!request.signal?.aborted) {
-          console.error("chat stream error:", err?.status, err?.message);
-          const msg =
-            err instanceof Anthropic.RateLimitError
-              ? "The AI is busy right now — please try again shortly."
-              : "Something went wrong while generating a reply.";
-          controller.enqueue(encoder.encode(`\n\n_${msg}_`));
+          console.error("chat stream error:", err?.message);
+          controller.enqueue(encoder.encode("\n\n_Something went wrong while generating a reply._"));
         }
       } finally {
         controller.close();
       }
     },
     cancel() {
-      stream.abort();
+      reader.cancel().catch(() => {});
     },
   });
 
-  return new Response(body$, {
+  return new Response(out, {
     headers: {
       "content-type": "text/plain; charset=utf-8",
       "cache-control": "no-store",
