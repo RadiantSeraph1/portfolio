@@ -182,7 +182,8 @@
   }
 
   function setStatus(el, status) {
-    const label = status === "searching" ? "Searching the web…" : "Thinking…";
+    const label =
+      status === "searching" ? "Searching the web…" : status === "reconnecting" ? "Reconnecting…" : "Thinking…";
     el.querySelector(".body").innerHTML =
       `<div class="status-line"><div class="typing" aria-hidden="true"><span></span><span></span><span></span></div><span>${label}</span></div>`;
   }
@@ -376,26 +377,40 @@
     return err?.message || "Something went wrong. Please try again.";
   }
 
-  // POST the conversation, retrying once if the network drops before any response arrives.
-  async function request(messages, signal) {
-    const payload = JSON.stringify({
-      messages: messages.map(({ role, content }) => ({ role, content })),
-      search: searchOn,
+  const MAX_ATTEMPTS = 3;
+  const STALL_TIMEOUT_MS = 45_000; // the server pings every ~8s, so this much silence means a dead connection
+  const RETRYABLE_STATUS = new Set([502, 503, 504]);
+
+  const sleep = (ms, signal) =>
+    new Promise((resolve, reject) => {
+      const t = setTimeout(resolve, ms);
+      signal?.addEventListener("abort", () => {
+        clearTimeout(t);
+        reject(new DOMException("Aborted", "AbortError"));
+      }, { once: true });
     });
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await fetch("/api/chat", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: payload,
-          signal,
-        });
-      } catch (err) {
-        if (err.name === "AbortError" || attempt >= 1) throw err;
-        await new Promise((r) => setTimeout(r, 1200));
-      }
-    }
+
+  /** If the browser is offline, wait (up to `ms`) for the connection to come back. */
+  function waitForOnline(ms, signal) {
+    if (navigator.onLine) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const done = () => {
+        clearTimeout(t);
+        window.removeEventListener("online", done);
+        resolve();
+      };
+      const t = setTimeout(done, ms);
+      window.addEventListener("online", done);
+      signal?.addEventListener("abort", () => {
+        clearTimeout(t);
+        window.removeEventListener("online", done);
+        reject(new DOMException("Aborted", "AbortError"));
+      }, { once: true });
+    });
   }
+
+  /** A failure that is worth trying again (connection problems, gateway errors). */
+  class RetryableError extends Error {}
 
   /** Send a new user message. */
   function send(text) {
@@ -465,54 +480,119 @@
       scrollToBottom();
     };
 
-    try {
-      const res = await request(chat.messages, controller.signal);
+    const payload = JSON.stringify({
+      messages: chat.messages.map(({ role, content }) => ({ role, content })),
+      search: searchOn,
+    });
 
-      if (!res.ok || !res.body) {
-        let msg = res.status === 429 ? "Too many requests. Please wait a moment and try again." : `Something went wrong (error ${res.status}). Please try again.`;
-        try {
-          msg = (await res.json()).error || msg;
-        } catch {}
-        throw new Error(msg);
+    const handle = (line) => {
+      if (!line.trim()) return;
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        return;
       }
+      if (event.type === "text") {
+        answer += event.value;
+        if (!frame) frame = requestAnimationFrame(paint);
+      } else if (event.type === "status" && !answer) {
+        setStatus(bubble, event.value);
+      } else if (event.type === "sources" && Array.isArray(event.value)) {
+        sources = event.value;
+      } else if (event.type === "error") {
+        streamError = event.value;
+      } else if (event.type === "debug") {
+        console.debug("[Radiant AI]", event.value);
+      }
+    };
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      const handle = (line) => {
-        if (!line.trim()) return;
-        let event;
-        try {
-          event = JSON.parse(line);
-        } catch {
-          return;
-        }
-        if (event.type === "text") {
-          answer += event.value;
-          if (!frame) frame = requestAnimationFrame(paint);
-        } else if (event.type === "status" && !answer) {
-          setStatus(bubble, event.value);
-        } else if (event.type === "sources" && Array.isArray(event.value)) {
-          sources = event.value;
-        } else if (event.type === "error") {
-          streamError = event.value;
-        }
+    /** One full attempt: send the request and read the streamed answer. */
+    const attemptOnce = async () => {
+      const attemptCtrl = new AbortController();
+      const stopAttempt = () => attemptCtrl.abort();
+      controller.signal.addEventListener("abort", stopAttempt, { once: true });
+      let stalled = false;
+      let watchdog = 0;
+      const arm = () => {
+        clearTimeout(watchdog);
+        watchdog = setTimeout(() => {
+          stalled = true;
+          attemptCtrl.abort();
+        }, STALL_TIMEOUT_MS);
       };
 
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let nl;
-        while ((nl = buffer.indexOf("\n")) !== -1) {
-          handle(buffer.slice(0, nl));
-          buffer = buffer.slice(nl + 1);
+      try {
+        arm();
+        let res;
+        try {
+          res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: payload,
+            signal: attemptCtrl.signal,
+          });
+        } catch (err) {
+          if (controller.signal.aborted) throw err;
+          throw new RetryableError(friendlyNetworkError(err));
+        }
+
+        if (!res.ok || !res.body) {
+          let msg =
+            res.status === 429
+              ? "Too many requests. Please wait a moment and try again."
+              : `Something went wrong (error ${res.status}). Please try again.`;
+          try {
+            msg = (await res.json()).error || msg;
+          } catch {}
+          if (RETRYABLE_STATUS.has(res.status)) throw new RetryableError(msg);
+          throw new Error(msg);
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            arm();
+            buffer += decoder.decode(value, { stream: true });
+            let nl;
+            while ((nl = buffer.indexOf("\n")) !== -1) {
+              handle(buffer.slice(0, nl));
+              buffer = buffer.slice(nl + 1);
+            }
+          }
+          handle(buffer + decoder.decode());
+        } catch (err) {
+          if (controller.signal.aborted) throw err;
+          throw new RetryableError(
+            stalled ? "The AI took too long to respond. Please try again." : "The connection dropped. Please try again."
+          );
+        }
+      } finally {
+        clearTimeout(watchdog);
+        controller.signal.removeEventListener("abort", stopAttempt);
+      }
+    };
+
+    try {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await attemptOnce();
+          break;
+        } catch (err) {
+          // Only start over if nothing has been shown yet; otherwise keep the partial answer.
+          if (!(err instanceof RetryableError) || answer || attempt >= MAX_ATTEMPTS) throw err;
+          setStatus(bubble, "reconnecting");
+          await waitForOnline(20_000, controller.signal);
+          await sleep(attempt === 1 ? 1000 : 2500, controller.signal);
+          setStatus(bubble, "thinking");
         }
       }
-      handle(buffer + decoder.decode());
     } catch (err) {
-      if (err.name !== "AbortError") streamError = friendlyNetworkError(err);
+      if (err.name !== "AbortError") streamError = err.message || friendlyNetworkError(err);
     } finally {
       if (frame) cancelAnimationFrame(frame);
       controller = null;

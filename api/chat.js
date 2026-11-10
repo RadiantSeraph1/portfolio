@@ -291,6 +291,50 @@ async function* sseJson(reader) {
 // Handler
 // ---------------------------------------------------------------------------
 
+// Time limits (Vercel stops the function at 60s; see vercel.json).
+const ATTEMPT_CONNECT_TIMEOUT_MS = 20_000; // max wait for a provider to start responding
+const FIRST_TEXT_TIMEOUT_MS = 40_000; // max wait for the first words before trying the next model
+const IDLE_TIMEOUT_MS = 25_000; // max silence once an answer is streaming
+const TOTAL_BUDGET_MS = 52_000; // stop starting new attempts after this
+const PING_INTERVAL_MS = 8_000; // keep-alive so proxies don't drop a quiet connection
+
+/** Short, non-secret reason for a failed upstream response, for the diagnostics line. */
+async function failureReason(res) {
+  const raw = await res.text().catch(() => "");
+  let reason = "";
+  if ([400, 401, 403].includes(res.status)) {
+    try {
+      const e = JSON.parse(raw).error || {};
+      reason = [e.status, e.message].filter(Boolean).join(": ");
+    } catch {
+      reason = raw;
+    }
+    reason = reason.replace(/\b(org|key|sk|gsk|AIza)[\w-]{6,}/g, "[redacted]").replace(/\s+/g, " ").slice(0, 120);
+  }
+  return { raw: raw.slice(0, 300), reason };
+}
+
+/** An AbortSignal that fires when the client disconnects or the (resettable) timer runs out. */
+function withTimeout(parent, ms) {
+  const ctrl = new AbortController();
+  let timer = null;
+  const arm = (t) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => ctrl.abort(new Error("timeout")), t);
+  };
+  const onAbort = () => ctrl.abort(parent.reason);
+  parent?.addEventListener?.("abort", onAbort, { once: true });
+  arm(ms);
+  return {
+    signal: ctrl.signal,
+    reset: arm,
+    clear() {
+      clearTimeout(timer);
+      parent?.removeEventListener?.("abort", onAbort);
+    },
+  };
+}
+
 export async function POST(request) {
   const chain = buildChain();
   if (!chain.length) {
@@ -314,64 +358,25 @@ export async function POST(request) {
 
   const wantSearch = body.search !== false;
   const history = recentHistory(body.messages);
-
-  let upstream = null;
-  let used = null;
-  let lastStatus = 0;
-  try {
-    for (const attempt of chain) {
-      const provider = PROVIDERS[attempt.provider];
-      const search = wantSearch && provider.supportsSearch(attempt.model);
-      const args = { model: attempt.model, history, signal: request.signal };
-
-      upstream = await provider.call({ ...args, search, safe: false });
-
-      // A 400 usually means an unsupported option (search tool or thinking setting on this
-      // model/plan): retry the same model with the plain settings rather than failing.
-      if (upstream.status === 400) {
-        const detail = await upstream.text().catch(() => "");
-        console.warn(`${attempt.provider} ${attempt.model} rejected request, retrying plain:`, detail.slice(0, 300));
-        upstream = await provider.call({ ...args, search: false, safe: true });
-      }
-
-      if (upstream.ok && upstream.body) {
-        used = attempt;
-        break;
-      }
-
-      lastStatus = upstream.status;
-      const detail = await upstream.text().catch(() => "");
-      console.warn(`${attempt.provider} ${attempt.model} failed with ${upstream.status}:`, detail.slice(0, 300));
-      upstream = null;
-
-      // Busy (429), unknown model (404), bad/expired key (401/403) and server errors are worth
-      // trying on the next model or provider. Anything else is a problem with the request itself.
-      if (![401, 403, 404, 429].includes(lastStatus) && lastStatus < 500) break;
-    }
-  } catch (err) {
-    if (request.signal?.aborted) return new Response(null, { status: 499 });
-    console.error("AI fetch failed:", err?.message);
-    return json(502, { error: "Couldn't reach the AI service. Please try again." });
-  }
-
-  if (!upstream) {
-    const error =
-      lastStatus === 429
-        ? "Radiant AI is getting a lot of messages right now. Please wait about a minute and try again."
-        : "The AI service had a problem answering. Please try again.";
-    return json(lastStatus === 429 ? 429 : 502, { error });
-  }
-
+  const started = Date.now();
   const encoder = new TextEncoder();
-  const reader = upstream.body.getReader();
-  const handleChunk = PROVIDERS[used.provider].handle;
+  let activeReader = null;
 
+  // Respond straight away and do all provider work inside the stream, so the browser's
+  // connection is established immediately and a failing provider can be swapped for the
+  // next one without the user seeing an error.
   const out = new ReadableStream({
     async start(controller) {
-      const send = (type, value) => controller.enqueue(encoder.encode(JSON.stringify({ type, value }) + "\n"));
+      let closed = false;
+      const send = (type, value) => {
+        if (!closed) controller.enqueue(encoder.encode(JSON.stringify({ type, value }) + "\n"));
+      };
+      const ping = setInterval(() => send("ping", Date.now() - started), PING_INTERVAL_MS);
+
       let status = null;
       let sentText = false;
       let pendingText = ""; // holds a possibly-unfinished 【...】 marker between chunks
+      const trace = [];
 
       const emitText = (piece, final = false) => {
         pendingText += piece;
@@ -396,54 +401,144 @@ export async function POST(request) {
         }
       };
 
-      const state = {
-        sources: new Map(),
-        cutOff: false,
-        blocked: false,
-        text: (t) => emitText(t),
-        status: (s) => {
-          if (s !== status && !sentText) {
-            status = s;
-            send("status", s);
-          }
-        },
+      const setStatus = (s) => {
+        if (s !== status && !sentText) {
+          status = s;
+          send("status", s);
+        }
       };
 
-      state.status("thinking");
+      setStatus("thinking");
+
+      let answered = false;
+      let blocked = false;
+      let sawBusy = false;
+      const deadProviders = new Set(); // providers whose key was rejected
+      const isKeyProblem = (status, reason) =>
+        status === 401 || status === 403 || /api[ _-]?key|permission|unauthenticated/i.test(reason || "");
 
       try {
-        for await (const chunk of sseJson(reader)) handleChunk(chunk, state);
-        emitText("", true);
+        for (const attempt of chain) {
+          if (request.signal?.aborted) break;
+          if (Date.now() - started > TOTAL_BUDGET_MS) {
+            trace.push(`${attempt.provider}:${attempt.model}=skipped(time)`);
+            continue;
+          }
 
-        if (!sentText) {
+          if (deadProviders.has(attempt.provider)) continue;
+          const provider = PROVIDERS[attempt.provider];
+          const search = wantSearch && provider.supportsSearch(attempt.model);
+          const label = `${attempt.provider}:${attempt.model}`;
+          const timer = withTimeout(request.signal, ATTEMPT_CONNECT_TIMEOUT_MS);
+
+          try {
+            const args = { model: attempt.model, history, signal: timer.signal };
+            let res = await provider.call({ ...args, search, safe: false });
+
+            // A 400 usually means an unsupported option (search tool or thinking setting on this
+            // model/plan): retry the same model once with plain settings.
+            if (res.status === 400) {
+              const { raw, reason } = await failureReason(res);
+              console.warn(`${label} rejected request, retrying plain:`, raw);
+              trace.push(`${label}=400(${reason})`);
+              if (isKeyProblem(400, reason)) {
+                deadProviders.add(attempt.provider);
+                continue;
+              }
+              res = await provider.call({ ...args, search: false, safe: true });
+            }
+
+            if (!res.ok || !res.body) {
+              const { raw, reason } = await failureReason(res);
+              console.warn(`${label} failed with ${res.status}:`, raw);
+              trace.push(`${label}=${res.status}${reason ? `(${reason})` : ""}`);
+              if (res.status === 429) sawBusy = true;
+              if (isKeyProblem(res.status, reason)) deadProviders.add(attempt.provider);
+              continue;
+            }
+
+            // Stream this provider's answer.
+            const state = {
+              sources: new Map(),
+              cutOff: false,
+              blocked: false,
+              text: (t) => emitText(t),
+              status: setStatus,
+            };
+            const reader = res.body.getReader();
+            activeReader = reader;
+            timer.reset(FIRST_TEXT_TIMEOUT_MS);
+
+            for await (const chunk of sseJson(reader)) {
+              provider.handle(chunk, state);
+              // Once words are flowing, only give up if the stream goes silent for too long.
+              if (sentText) timer.reset(IDLE_TIMEOUT_MS);
+            }
+            emitText("", true);
+
+            if (!sentText) {
+              // Finished without an answer: refused/blocked, or empty. Try the next model.
+              trace.push(`${label}=${state.blocked ? "blocked" : "empty"}`);
+              if (state.blocked) blocked = true;
+              continue;
+            }
+
+            trace.push(`${label}=ok`);
+            if (state.cutOff) {
+              send("text", "\n\n_(The answer was cut off because it reached the length limit. Ask me to continue.)_");
+            }
+            if (state.sources.size) send("sources", [...state.sources.values()].slice(0, 8));
+            answered = true;
+            break;
+          } catch (err) {
+            if (request.signal?.aborted) break;
+            const why = timer.signal.aborted ? "timeout" : "error";
+            console.warn(`${label} ${why}:`, err?.message);
+            trace.push(`${label}=${why}`);
+            if (sentText) {
+              // The answer was already partly shown; we can't switch models mid-sentence.
+              send("error", "The connection to the AI was interrupted. Please try again.");
+              answered = true;
+              break;
+            }
+          } finally {
+            timer.clear();
+            activeReader = null;
+          }
+        }
+
+        if (!answered && !request.signal?.aborted) {
           send(
             "error",
-            state.blocked
+            blocked
               ? "Sorry, I can't help with that request. Try rephrasing it."
-              : "The AI didn't return an answer. Please try again."
+              : sawBusy
+                ? "Radiant AI is getting a lot of messages right now. Please wait about a minute and try again."
+                : "The AI service had a problem answering. Please try again."
           );
-        } else if (state.cutOff) {
-          send("text", "\n\n_(The answer was cut off because it reached the length limit. Ask me to continue.)_");
         }
-        if (state.sources.size) send("sources", [...state.sources.values()].slice(0, 8));
       } catch (err) {
-        if (!request.signal?.aborted) {
-          console.error("chat stream error:", err?.message);
-          send("error", "The connection to the AI was interrupted. Please try again.");
-        }
+        console.error("chat handler error:", err?.message);
+        if (!sentText) send("error", "Something went wrong. Please try again.");
       } finally {
+        // Which provider answered and why others were skipped (no secrets). Ignored by the page.
+        send("debug", trace.join("; "));
+        console.log("chat trace:", trace.join("; "));
+        clearInterval(ping);
+        closed = true;
         controller.close();
       }
     },
     cancel() {
-      reader.cancel().catch(() => {});
+      activeReader?.cancel().catch(() => {});
     },
   });
 
   return new Response(out, {
     headers: {
       "content-type": "application/x-ndjson; charset=utf-8",
-      "cache-control": "no-store",
+      "cache-control": "no-store, no-transform",
+      "x-accel-buffering": "no",
       "x-content-type-options": "nosniff",
     },
   });
