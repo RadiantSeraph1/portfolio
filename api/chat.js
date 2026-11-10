@@ -7,19 +7,25 @@
 //   {"type":"sources","value":[{title,url}]}  (web pages used, if any)
 //   {"type":"error","value":"..."}           (something went wrong mid-reply)
 //
-// Environment variables (set them in the Vercel project settings):
-//   GROQ_API_KEY  (required) - your key from https://console.groq.com/keys
-//   GROQ_MODEL    (optional) - first model to try; defaults to openai/gpt-oss-120b
-//                  Web search only works with openai/gpt-oss-120b or openai/gpt-oss-20b.
+// Environment variables (set them in the Vercel project settings). At least one key is required:
+//   GROQ_API_KEY       - key from https://console.groq.com/keys
+//   GROQ_MODEL         - optional first Groq model; defaults to openai/gpt-oss-120b
+//   GEMINI_API_KEY     - key from https://aistudio.google.com (Get API key)
+//   GEMINI_MODEL       - optional first Gemini model; defaults to gemini-3.8-flash
+//   AI_PROVIDER_ORDER  - optional, "groq,gemini" (default) or "gemini,groq"
 //
-// Groq rate-limits each model separately, so when one model is busy (HTTP 429) or failing,
-// the request moves on to the next model in FALLBACK_MODELS instead of showing an error.
+// Every provider and model has its own rate limit, so when one is busy (HTTP 429) or failing,
+// the request moves on to the next model in the chain instead of showing an error.
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-const DEFAULT_MODEL = "openai/gpt-oss-120b";
-const FALLBACK_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
+const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
 
-// Only the most recent part of a long chat is sent, to keep requests fast and within Groq's
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"];
+
+const MAX_OUTPUT_TOKENS = 4096;
+
+// Only the most recent part of a long chat is sent, to keep requests fast and within
 // tokens-per-minute limits. (The full chat is still saved in the browser.)
 const CONTEXT_MAX_MESSAGES = 12;
 const CONTEXT_MAX_CHARS = 14000;
@@ -97,27 +103,6 @@ function validate(body) {
   return null;
 }
 
-// Remove gpt-oss citation markers such as 【2†L6-L10】 from the visible answer.
-function stripCitationMarkers(text) {
-  return text.replace(/[ \t]*【[^】]*】/g, "");
-}
-
-// Pull {title, url} pairs out of Groq's executed tool output, whatever shape it arrives in.
-function collectSources(tools, into) {
-  if (!Array.isArray(tools)) return;
-  for (const tool of tools) {
-    const lists = [tool?.search_results?.results, tool?.search_results, tool?.results];
-    for (const list of lists) {
-      if (!Array.isArray(list)) continue;
-      for (const r of list) {
-        const url = typeof r?.url === "string" ? r.url : null;
-        if (!url || !/^https?:\/\//i.test(url) || into.has(url)) continue;
-        into.set(url, { title: String(r.title || url).slice(0, 200), url });
-      }
-    }
-  }
-}
-
 // Keep the latest messages that fit the context budget; the kept part must start with a user message.
 function recentHistory(messages) {
   const kept = [];
@@ -133,35 +118,182 @@ function recentHistory(messages) {
   return kept;
 }
 
-async function callGroq({ apiKey, model, messages, search, signal }) {
-  const isGptOss = model.startsWith("openai/gpt-oss");
+function isHttpUrl(url) {
+  return typeof url === "string" && /^https?:\/\//i.test(url);
+}
+
+function unique(list) {
+  return [...new Set(list.filter(Boolean))];
+}
+
+/** The ordered list of {provider, model} attempts, based on which keys are configured. */
+function buildChain() {
+  const chains = {
+    groq: process.env.GROQ_API_KEY
+      ? unique([process.env.GROQ_MODEL, ...GROQ_MODELS]).map((model) => ({ provider: "groq", model }))
+      : [],
+    gemini: process.env.GEMINI_API_KEY
+      ? unique([process.env.GEMINI_MODEL, ...GEMINI_MODELS]).map((model) => ({ provider: "gemini", model }))
+      : [],
+  };
+  const order = unique([...(process.env.AI_PROVIDER_ORDER || "").toLowerCase().split(/[\s,]+/), "groq", "gemini"]);
+  return order.flatMap((name) => chains[name] || []);
+}
+
+// ---------------------------------------------------------------------------
+// Groq (OpenAI-compatible chat completions)
+// ---------------------------------------------------------------------------
+
+const groqSupportsSearch = (model) => model.startsWith("openai/gpt-oss");
+
+function callGroq({ model, history, search, safe, signal }) {
   const payload = {
     model,
-    messages,
+    messages: [{ role: "system", content: systemPrompt(search) }, ...history],
     stream: true,
-    max_completion_tokens: 4096,
+    max_completion_tokens: MAX_OUTPUT_TOKENS,
   };
   // Low effort is much faster and is what Groq recommends with browser search.
-  if (isGptOss) payload.reasoning_effort = "low";
-  if (search && isGptOss) {
+  if (groqSupportsSearch(model) && !safe) payload.reasoning_effort = "low";
+  if (search) {
     payload.tools = [{ type: "browser_search" }];
     payload.tool_choice = "auto";
   }
-
   return fetch(GROQ_URL, {
     method: "POST",
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      "content-type": "application/json",
-    },
+    headers: { authorization: `Bearer ${process.env.GROQ_API_KEY}`, "content-type": "application/json" },
     body: JSON.stringify(payload),
     signal,
   });
 }
 
+// Pull {title, url} pairs out of Groq's executed tool output, whatever shape it arrives in.
+function collectGroqSources(tools, into) {
+  if (!Array.isArray(tools)) return;
+  for (const tool of tools) {
+    for (const list of [tool?.search_results?.results, tool?.search_results, tool?.results]) {
+      if (!Array.isArray(list)) continue;
+      for (const r of list) {
+        if (!isHttpUrl(r?.url) || into.has(r.url)) continue;
+        into.set(r.url, { title: String(r.title || r.url).slice(0, 200), url: r.url });
+      }
+    }
+  }
+}
+
+function handleGroqChunk(chunk, out) {
+  if (chunk.error) throw new Error(chunk.error.message || "stream error");
+  const choice = chunk.choices?.[0];
+  const delta = choice?.delta || {};
+  if (delta.executed_tools || delta.tool_calls) {
+    out.status("searching");
+    collectGroqSources(delta.executed_tools, out.sources);
+  }
+  collectGroqSources(chunk.x_groq?.executed_tools, out.sources);
+  if (typeof delta.content === "string" && delta.content) out.text(delta.content);
+  if (choice?.finish_reason === "length") out.cutOff = true;
+}
+
+// ---------------------------------------------------------------------------
+// Google Gemini API (AI Studio key)
+// ---------------------------------------------------------------------------
+
+const geminiSupportsThinkingLevel = (model) => /^gemini-([3-9]|\d\d)/.test(model);
+
+function callGemini({ model, history, search, safe, signal }) {
+  const generationConfig = { maxOutputTokens: MAX_OUTPUT_TOKENS };
+  // Gemini 3+ thinks by default; a low thinking level keeps replies fast.
+  if (!safe && geminiSupportsThinkingLevel(model)) generationConfig.thinkingConfig = { thinkingLevel: "low" };
+
+  const payload = {
+    systemInstruction: { parts: [{ text: systemPrompt(search) }] },
+    contents: history.map(({ role, content }) => ({
+      role: role === "assistant" ? "model" : "user",
+      parts: [{ text: content }],
+    })),
+    generationConfig,
+  };
+  if (search) payload.tools = [{ google_search: {} }];
+
+  return fetch(`${GEMINI_URL}/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+    method: "POST",
+    headers: { "x-goog-api-key": process.env.GEMINI_API_KEY, "content-type": "application/json" },
+    body: JSON.stringify(payload),
+    signal,
+  });
+}
+
+const GEMINI_BLOCKED = new Set(["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION"]);
+
+function handleGeminiChunk(chunk, out) {
+  if (chunk.error) throw new Error(chunk.error.message || "stream error");
+  if (chunk.promptFeedback?.blockReason) out.blocked = true;
+
+  const candidate = chunk.candidates?.[0];
+  if (!candidate) return;
+
+  const grounding = candidate.groundingMetadata;
+  if (grounding?.webSearchQueries?.length) out.status("searching");
+  for (const c of grounding?.groundingChunks || []) {
+    const web = c?.web;
+    if (!isHttpUrl(web?.uri) || out.sources.has(web.uri)) continue;
+    out.sources.set(web.uri, { title: String(web.title || web.uri).slice(0, 200), url: web.uri });
+  }
+
+  for (const part of candidate.content?.parts || []) {
+    if (part.thought) continue; // thinking summaries are not part of the answer
+    if (typeof part.text === "string" && part.text) out.text(part.text);
+  }
+
+  if (candidate.finishReason === "MAX_TOKENS") out.cutOff = true;
+  if (GEMINI_BLOCKED.has(candidate.finishReason)) out.blocked = true;
+}
+
+const PROVIDERS = {
+  groq: { call: callGroq, handle: handleGroqChunk, supportsSearch: groqSupportsSearch },
+  gemini: { call: callGemini, handle: handleGeminiChunk, supportsSearch: () => true },
+};
+
+// ---------------------------------------------------------------------------
+// Shared streaming helpers
+// ---------------------------------------------------------------------------
+
+// Remove gpt-oss citation markers such as 【2†L6-L10】 from the visible answer.
+function stripCitationMarkers(text) {
+  return text.replace(/[ \t]*【[^】]*】/g, "");
+}
+
+/** Yield the parsed JSON of each `data:` line of a server-sent event stream. */
+async function* sseJson(reader) {
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newline;
+    while ((newline = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (data === "[DONE]") return;
+      try {
+        yield JSON.parse(data);
+      } catch {
+        // ignore malformed lines
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Handler
+// ---------------------------------------------------------------------------
+
 export async function POST(request) {
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) {
+  const chain = buildChain();
+  if (!chain.length) {
     return json(500, { error: "The AI service is not configured yet." });
   }
 
@@ -180,41 +312,45 @@ export async function POST(request) {
   const problem = validate(body);
   if (problem) return json(400, { error: problem });
 
-  const primary = process.env.GROQ_MODEL || DEFAULT_MODEL;
-  const models = [primary, ...FALLBACK_MODELS.filter((m) => m !== primary)];
   const wantSearch = body.search !== false;
   const history = recentHistory(body.messages);
 
-  const buildMessages = (withSearch) => [{ role: "system", content: systemPrompt(withSearch) }, ...history];
-
   let upstream = null;
+  let used = null;
   let lastStatus = 0;
   try {
-    for (const model of models) {
-      let search = wantSearch && model.startsWith("openai/gpt-oss");
-      upstream = await callGroq({ apiKey, model, messages: buildMessages(search), search, signal: request.signal });
+    for (const attempt of chain) {
+      const provider = PROVIDERS[attempt.provider];
+      const search = wantSearch && provider.supportsSearch(attempt.model);
+      const args = { model: attempt.model, history, signal: request.signal };
 
-      // If web search is rejected (e.g. unsupported on this plan), answer without it rather than failing.
-      if (search && upstream.status === 400) {
+      upstream = await provider.call({ ...args, search, safe: false });
+
+      // A 400 usually means an unsupported option (search tool or thinking setting on this
+      // model/plan): retry the same model with the plain settings rather than failing.
+      if (upstream.status === 400) {
         const detail = await upstream.text().catch(() => "");
-        console.warn(`groq rejected search on ${model}, retrying without tools:`, detail.slice(0, 300));
-        search = false;
-        upstream = await callGroq({ apiKey, model, messages: buildMessages(false), search: false, signal: request.signal });
+        console.warn(`${attempt.provider} ${attempt.model} rejected request, retrying plain:`, detail.slice(0, 300));
+        upstream = await provider.call({ ...args, search: false, safe: true });
       }
 
-      if (upstream.ok && upstream.body) break;
+      if (upstream.ok && upstream.body) {
+        used = attempt;
+        break;
+      }
 
       lastStatus = upstream.status;
       const detail = await upstream.text().catch(() => "");
-      console.warn(`groq ${model} failed with ${upstream.status}:`, detail.slice(0, 300));
+      console.warn(`${attempt.provider} ${attempt.model} failed with ${upstream.status}:`, detail.slice(0, 300));
       upstream = null;
 
-      // Only busy/overloaded/server errors are worth trying on another model.
-      if (lastStatus !== 429 && lastStatus !== 404 && lastStatus < 500) break;
+      // Busy (429), unknown model (404), bad/expired key (401/403) and server errors are worth
+      // trying on the next model or provider. Anything else is a problem with the request itself.
+      if (![401, 403, 404, 429].includes(lastStatus) && lastStatus < 500) break;
     }
   } catch (err) {
     if (request.signal?.aborted) return new Response(null, { status: 499 });
-    console.error("groq fetch failed:", err?.message);
+    console.error("AI fetch failed:", err?.message);
     return json(502, { error: "Couldn't reach the AI service. Please try again." });
   }
 
@@ -227,25 +363,15 @@ export async function POST(request) {
   }
 
   const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
   const reader = upstream.body.getReader();
+  const handleChunk = PROVIDERS[used.provider].handle;
 
   const out = new ReadableStream({
     async start(controller) {
       const send = (type, value) => controller.enqueue(encoder.encode(JSON.stringify({ type, value }) + "\n"));
-      const sources = new Map();
-      let buffer = "";
-      let finishReason = null;
       let status = null;
       let sentText = false;
       let pendingText = ""; // holds a possibly-unfinished 【...】 marker between chunks
-
-      const setStatus = (s) => {
-        if (s !== status && !sentText) {
-          status = s;
-          send("status", s);
-        }
-      };
 
       const emitText = (piece, final = false) => {
         pendingText += piece;
@@ -270,54 +396,36 @@ export async function POST(request) {
         }
       };
 
-      setStatus("thinking");
+      const state = {
+        sources: new Map(),
+        cutOff: false,
+        blocked: false,
+        text: (t) => emitText(t),
+        status: (s) => {
+          if (s !== status && !sentText) {
+            status = s;
+            send("status", s);
+          }
+        },
+      };
+
+      state.status("thinking");
 
       try {
-        // Groq streams OpenAI-style server-sent events: "data: {json}\n\n", ending with "data: [DONE]".
-        outer: while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-
-          let newline;
-          while ((newline = buffer.indexOf("\n")) !== -1) {
-            const line = buffer.slice(0, newline).trim();
-            buffer = buffer.slice(newline + 1);
-            if (!line.startsWith("data:")) continue;
-
-            const data = line.slice(5).trim();
-            if (data === "[DONE]") break outer;
-
-            let chunk;
-            try {
-              chunk = JSON.parse(data);
-            } catch {
-              continue;
-            }
-            if (chunk.error) throw new Error(chunk.error.message || "stream error");
-
-            const choice = chunk.choices?.[0];
-            const delta = choice?.delta || {};
-
-            if (delta.executed_tools || delta.tool_calls) {
-              setStatus("searching");
-              collectSources(delta.executed_tools, sources);
-            }
-            collectSources(chunk.x_groq?.executed_tools, sources);
-
-            if (typeof delta.content === "string" && delta.content) emitText(delta.content);
-            if (choice?.finish_reason) finishReason = choice.finish_reason;
-          }
-        }
-
+        for await (const chunk of sseJson(reader)) handleChunk(chunk, state);
         emitText("", true);
 
         if (!sentText) {
-          send("error", "The AI didn't return an answer. Please try again.");
-        } else if (finishReason === "length") {
+          send(
+            "error",
+            state.blocked
+              ? "Sorry, I can't help with that request. Try rephrasing it."
+              : "The AI didn't return an answer. Please try again."
+          );
+        } else if (state.cutOff) {
           send("text", "\n\n_(The answer was cut off because it reached the length limit. Ask me to continue.)_");
         }
-        if (sources.size) send("sources", [...sources.values()].slice(0, 8));
+        if (state.sources.size) send("sources", [...state.sources.values()].slice(0, 8));
       } catch (err) {
         if (!request.signal?.aborted) {
           console.error("chat stream error:", err?.message);

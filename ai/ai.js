@@ -242,6 +242,10 @@
         const u = new URL(s.url);
         if (u.protocol !== "http:" && u.protocol !== "https:") continue;
         host = u.hostname.replace(/^www\./, "");
+        // Gemini sources link through a Google redirect but carry the real site name as the title.
+        if (/(^|\.)vertexaisearch\.cloud\.google\.com$/.test(u.hostname) && /^[\w-]+(\.[\w-]+)+$/.test(s.title || "")) {
+          host = s.title.replace(/^www\./, "");
+        }
       } catch {
         continue;
       }
