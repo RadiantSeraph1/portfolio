@@ -514,9 +514,99 @@ svg.lucide {
   40% { opacity: 1; transform: scale(1); }
 }
 
-.error-note {
-  color: #cf6a4c;
-  font-size: 0.9rem;
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.25rem 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.status-line .typing {
+  padding: 0;
+}
+
+.sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.85rem;
+}
+
+.sources-label {
+  width: 100%;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.source-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.source-chip:hover {
+  color: var(--text);
+  background: var(--panel);
+}
+
+.source-chip img {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.source-chip span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.error-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid color-mix(in srgb, #cf6a4c 45%, transparent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, #cf6a4c 10%, transparent);
+  font-size: 0.92rem;
+}
+
+.error-card p {
+  flex: 1;
+  min-width: 12rem;
+  margin: 0;
+}
+
+.retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.85rem;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.retry-btn svg.lucide {
+  width: 15px;
+  height: 15px;
 }
 
 /* Composer */
@@ -526,13 +616,13 @@ svg.lucide {
 
 .composer-box {
   display: flex;
-  align-items: flex-end;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.25rem;
   max-width: 760px;
   margin: 0 auto;
-  padding: 0.5rem 0.5rem 0.5rem 1rem;
+  padding: 0.6rem 0.6rem 0.5rem 1rem;
   border: 1px solid var(--line);
-  border-radius: 24px;
+  border-radius: 22px;
   background: var(--panel);
 }
 
@@ -541,10 +631,10 @@ svg.lucide {
 }
 
 .composer textarea {
-  flex: 1;
+  width: 100%;
   min-height: 2.25rem;
   max-height: 200px;
-  padding: 0.4rem 0;
+  padding: 0.35rem 0.4rem 0.35rem 0;
   border: 0;
   outline: 0;
   resize: none;
@@ -554,6 +644,40 @@ svg.lucide {
 
 .composer textarea::placeholder {
   color: var(--muted);
+}
+
+.composer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.tool-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.tool-toggle svg.lucide {
+  width: 15px;
+  height: 15px;
+}
+
+.tool-toggle:hover {
+  color: var(--text);
+}
+
+.tool-toggle[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
 }
 
 .send {

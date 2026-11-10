@@ -1,6 +1,7 @@
 (() => {
   const STORE_KEY = "radiant-ai-chats";
   const THEME_KEY = "samuel-portfolio-theme";
+  const SEARCH_KEY = "radiant-ai-search";
   const MAX_SAVED_CHATS = 50;
 
   const $ = (sel) => document.querySelector(sel);
@@ -16,11 +17,16 @@
   const sendBtn = $(".send");
   const titleEl = $(".chat-title");
   const themeToggle = $(".theme-toggle");
+  const searchToggle = $("#search-toggle");
 
-  /** @type {{id: string, title: string, updated: number, messages: {role: string, content: string}[]}[]} */
+  /**
+   * Saved chats. Each message is {role, content} plus optional `sources` on assistant replies.
+   * @type {{id: string, title: string, updated: number, messages: {role: string, content: string, sources?: {title: string, url: string}[]}[]}[]}
+   */
   let chats = load();
-  let current = null; // active chat object (null = unsaved new chat)
+  let current = null; // active chat (null = new, unsaved chat)
   let controller = null; // AbortController for the in-flight request
+  let failure = null; // {chat, text, userEl, errorEl} for the last failed message
 
   // ---------- storage ----------
   function load() {
@@ -34,13 +40,14 @@
 
   function save() {
     try {
+      chats = chats.filter((c) => c.messages.length);
       chats.sort((a, b) => b.updated - a.updated);
       chats = chats.slice(0, MAX_SAVED_CHATS);
       localStorage.setItem(STORE_KEY, JSON.stringify(chats));
     } catch {}
   }
 
-  // ---------- icons / theme ----------
+  // ---------- icons / theme / search toggle ----------
   const icons = () => window.lucide?.createIcons();
 
   function applyTheme(theme) {
@@ -57,6 +64,22 @@
 
   themeToggle.addEventListener("click", () => applyTheme(root.dataset.theme === "dark" ? "light" : "dark"));
 
+  let searchOn = true;
+  try {
+    searchOn = localStorage.getItem(SEARCH_KEY) !== "off";
+  } catch {}
+
+  function applySearch(on) {
+    searchOn = on;
+    searchToggle.setAttribute("aria-pressed", String(on));
+    searchToggle.title = on ? "Web search is on: the AI can look up current information" : "Web search is off";
+    try {
+      localStorage.setItem(SEARCH_KEY, on ? "on" : "off");
+    } catch {}
+  }
+
+  searchToggle.addEventListener("click", () => applySearch(!searchOn));
+
   // ---------- markdown ----------
   function renderMarkdown(text) {
     if (!window.marked || !window.DOMPurify) {
@@ -64,11 +87,10 @@
       div.textContent = text;
       return div.innerHTML.replace(/\n/g, "<br>");
     }
-    const html = window.marked.parse(text, { gfm: true, breaks: false });
-    return window.DOMPurify.sanitize(html);
+    return window.DOMPurify.sanitize(window.marked.parse(text, { gfm: true, breaks: false }));
   }
 
-  function decorateCode(container) {
+  function decorate(container) {
     container.querySelectorAll("pre").forEach((pre) => {
       if (pre.querySelector(".copy-code")) return;
       const code = pre.querySelector("code");
@@ -102,19 +124,23 @@
         span.textContent = "Copied!";
         setTimeout(() => (span.textContent = prev), 1500);
       }
-    } catch {}
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   // ---------- rendering ----------
   function renderSidebar() {
     chatList.innerHTML = "";
-    if (!chats.length) return;
+    const saved = chats.filter((c) => c.messages.length);
+    if (!saved.length) return;
     const label = document.createElement("div");
     label.className = "label";
     label.textContent = "Recent";
     chatList.append(label);
 
-    for (const chat of chats) {
+    for (const chat of saved) {
       const item = document.createElement("div");
       item.className = "chat-item" + (current?.id === chat.id ? " active" : "");
 
@@ -146,58 +172,118 @@
     return el;
   }
 
-  function assistantBubble(text = "", { pending = false } = {}) {
+  function assistantShell() {
     const el = document.createElement("div");
     el.className = "msg assistant";
-    el.innerHTML = `<span class="brand-mark avatar">AI</span><div class="content" style="flex:1;min-width:0"><div class="body"></div></div>`;
-    const body = el.querySelector(".body");
-    if (pending) {
-      body.innerHTML = '<div class="typing" aria-label="Thinking"><span></span><span></span><span></span></div>';
-    } else {
-      body.innerHTML = renderMarkdown(text);
-      decorateCode(body);
-      addActions(el, text);
-    }
+    el.innerHTML =
+      '<span class="brand-mark avatar">AI</span><div class="content" style="flex:1;min-width:0"><div class="body"></div></div>';
     thread.append(el);
     return el;
   }
 
-  function addActions(el, text) {
+  function setStatus(el, status) {
+    const label = status === "searching" ? "Searching the web…" : "Thinking…";
+    el.querySelector(".body").innerHTML =
+      `<div class="status-line"><div class="typing" aria-hidden="true"><span></span><span></span><span></span></div><span>${label}</span></div>`;
+  }
+
+  function finishAssistant(el, message, { isLast = false } = {}) {
+    const body = el.querySelector(".body");
+    body.innerHTML = renderMarkdown(message.content);
+    decorate(body);
+
+    const content = el.querySelector(".content");
+    content.querySelector(".sources")?.remove();
+    content.querySelector(".msg-actions")?.remove();
+
+    if (message.sources?.length) content.append(sourcesEl(message.sources));
+
     const actions = document.createElement("div");
     actions.className = "msg-actions";
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "icon-btn";
-    btn.setAttribute("aria-label", "Copy response");
-    btn.innerHTML = '<i data-lucide="copy"></i>';
-    btn.addEventListener("click", async () => {
-      await copy(text, btn);
-      btn.innerHTML = '<i data-lucide="check"></i>';
-      icons();
-      setTimeout(() => {
-        btn.innerHTML = '<i data-lucide="copy"></i>';
-        icons();
-      }, 1500);
-    });
-    actions.append(btn);
-    el.querySelector(".content").append(actions);
+    actions.append(
+      actionBtn("copy", "Copy response", async (btn) => {
+        if (await copy(message.content, btn)) {
+          btn.innerHTML = '<i data-lucide="check"></i>';
+          icons();
+          setTimeout(() => {
+            btn.innerHTML = '<i data-lucide="copy"></i>';
+            icons();
+          }, 1500);
+        }
+      })
+    );
+    if (isLast) actions.append(actionBtn("refresh-cw", "Regenerate response", () => regenerate()));
+    content.append(actions);
     icons();
   }
 
+  function actionBtn(icon, label, onClick) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "icon-btn";
+    btn.title = label;
+    btn.setAttribute("aria-label", label);
+    btn.innerHTML = `<i data-lucide="${icon}"></i>`;
+    btn.addEventListener("click", () => onClick(btn));
+    return btn;
+  }
+
+  function sourcesEl(sources) {
+    const wrap = document.createElement("div");
+    wrap.className = "sources";
+    const label = document.createElement("div");
+    label.className = "sources-label";
+    label.textContent = "Sources";
+    wrap.append(label);
+
+    for (const s of sources) {
+      let host = "";
+      try {
+        const u = new URL(s.url);
+        if (u.protocol !== "http:" && u.protocol !== "https:") continue;
+        host = u.hostname.replace(/^www\./, "");
+      } catch {
+        continue;
+      }
+      const a = document.createElement("a");
+      a.className = "source-chip";
+      a.href = s.url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.title = s.title || s.url;
+
+      const icon = document.createElement("img");
+      icon.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`;
+      icon.alt = "";
+      icon.loading = "lazy";
+      icon.onerror = () => icon.remove();
+
+      const text = document.createElement("span");
+      text.textContent = s.title && s.title !== s.url ? s.title : host;
+
+      a.append(icon, text);
+      wrap.append(a);
+    }
+    return wrap;
+  }
+
   function renderThread() {
+    clearFailure();
     thread.innerHTML = "";
     const msgs = current?.messages ?? [];
     empty.hidden = msgs.length > 0;
-    for (const m of msgs) {
-      m.role === "user" ? userBubble(m.content) : assistantBubble(m.content);
-    }
+    const lastIndex = msgs.length - 1;
+    msgs.forEach((m, i) => {
+      if (m.role === "user") userBubble(m.content);
+      else finishAssistant(assistantShell(), m, { isLast: i === lastIndex });
+    });
     titleEl.textContent = current?.title ?? "New chat";
     document.title = current ? `${current.title} | Radiant AI` : "Radiant AI | Samuel Maclar";
     scrollToBottom(true);
   }
 
   function nearBottom() {
-    return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 120;
+    return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 140;
   }
 
   function scrollToBottom(force = false) {
@@ -235,13 +321,41 @@
     return clean.length > 48 ? clean.slice(0, 45) + "…" : clean;
   }
 
+  // ---------- failures ----------
+  function clearFailure({ removeUser = false } = {}) {
+    if (!failure) return;
+    failure.errorEl.remove();
+    if (removeUser) failure.userEl.remove();
+    failure = null;
+  }
+
+  function showFailure(chat, text, userEl, message) {
+    const card = document.createElement("div");
+    card.className = "error-card";
+    card.setAttribute("role", "alert");
+    const p = document.createElement("p");
+    p.textContent = message;
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "retry-btn";
+    retry.innerHTML = '<i data-lucide="rotate-ccw"></i><span>Retry</span>';
+    retry.addEventListener("click", () => {
+      clearFailure({ removeUser: true });
+      send(text);
+    });
+    card.append(p, retry);
+    thread.append(card);
+    failure = { chat, text, userEl, errorEl: card };
+    icons();
+    scrollToBottom(true);
+  }
+
   // ---------- sending ----------
   function setBusy(busy) {
-    sendBtn.disabled = false;
     sendBtn.setAttribute("aria-label", busy ? "Stop generating" : "Send message");
     sendBtn.innerHTML = `<i data-lucide="${busy ? "square" : "arrow-up"}"></i>`;
+    sendBtn.disabled = busy ? false : !input.value.trim();
     icons();
-    updateSendState();
   }
 
   function updateSendState() {
@@ -252,51 +366,106 @@
     controller?.abort();
   }
 
-  async function send(text) {
+  function friendlyNetworkError(err) {
+    if (!navigator.onLine) return "You appear to be offline. Check your internet connection and try again.";
+    if (err?.name === "TypeError") return "Couldn't reach the server. Check your connection and try again.";
+    return err?.message || "Something went wrong. Please try again.";
+  }
+
+  // POST the conversation, retrying once if the network drops before any response arrives.
+  async function request(messages, signal) {
+    const payload = JSON.stringify({
+      messages: messages.map(({ role, content }) => ({ role, content })),
+      search: searchOn,
+    });
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await fetch("/api/chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: payload,
+          signal,
+        });
+      } catch (err) {
+        if (err.name === "AbortError" || attempt >= 1) throw err;
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+    }
+  }
+
+  /** Send a new user message. */
+  function send(text) {
     text = text.trim();
     if (!text || controller) return;
 
+    // A new message replaces any failed one that was never answered.
+    clearFailure({ removeUser: true });
+
     if (!current) {
-      current = { id: crypto.randomUUID?.() ?? String(Date.now()), title: makeTitle(text), updated: Date.now(), messages: [] };
+      current = {
+        id: crypto.randomUUID?.() ?? String(Date.now()),
+        title: makeTitle(text),
+        updated: Date.now(),
+        messages: [],
+      };
       chats.unshift(current);
     }
-    const chat = current;
-    chat.messages.push({ role: "user", content: text });
-    chat.updated = Date.now();
-    save();
 
+    // Drop the "Regenerate" button from the previous answer.
+    thread.querySelectorAll('.msg.assistant .msg-actions [aria-label="Regenerate response"]').forEach((b) => b.remove());
+
+    current.messages.push({ role: "user", content: text });
+    current.updated = Date.now();
     empty.hidden = true;
-    titleEl.textContent = chat.title;
-    renderSidebar();
-    userBubble(text);
-    const bubble = assistantBubble("", { pending: true });
-    const body = bubble.querySelector(".body");
-    scrollToBottom(true);
+    titleEl.textContent = current.title;
+    document.title = `${current.title} | Radiant AI`;
+    const userEl = userBubble(text);
 
     input.value = "";
     autosize();
+    save();
+    renderSidebar();
+    reply(current, text, userEl);
+  }
+
+  /** Re-run the last answer. */
+  function regenerate() {
+    if (controller || !current) return;
+    const msgs = current.messages;
+    if (msgs.at(-1)?.role !== "assistant") return;
+    msgs.pop();
+    [...thread.querySelectorAll(".msg.assistant")].at(-1)?.remove();
+    const lastUser = msgs.at(-1);
+    const userEls = thread.querySelectorAll(".msg.user");
+    reply(current, lastUser.content, userEls[userEls.length - 1]);
+  }
+
+  /** Stream an assistant reply for a chat whose last message is from the user. */
+  async function reply(chat, text, userEl) {
+    const bubble = assistantShell();
+    setStatus(bubble, "thinking");
+    scrollToBottom(true);
 
     controller = new AbortController();
     setBusy(true);
 
-    let reply = "";
+    const body = bubble.querySelector(".body");
+    let answer = "";
+    let sources = [];
+    let streamError = null;
     let frame = 0;
+
     const paint = () => {
       frame = 0;
-      body.innerHTML = renderMarkdown(reply);
+      body.innerHTML = renderMarkdown(answer);
       scrollToBottom();
     };
 
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ messages: chat.messages }),
-        signal: controller.signal,
-      });
+      const res = await request(chat.messages, controller.signal);
 
       if (!res.ok || !res.body) {
-        let msg = `Request failed (${res.status})`;
+        let msg = res.status === 429 ? "Too many requests. Please wait a moment and try again." : `Something went wrong (error ${res.status}). Please try again.`;
         try {
           msg = (await res.json()).error || msg;
         } catch {}
@@ -305,69 +474,76 @@
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
+      let buffer = "";
+
+      const handle = (line) => {
+        if (!line.trim()) return;
+        let event;
+        try {
+          event = JSON.parse(line);
+        } catch {
+          return;
+        }
+        if (event.type === "text") {
+          answer += event.value;
+          if (!frame) frame = requestAnimationFrame(paint);
+        } else if (event.type === "status" && !answer) {
+          setStatus(bubble, event.value);
+        } else if (event.type === "sources" && Array.isArray(event.value)) {
+          sources = event.value;
+        } else if (event.type === "error") {
+          streamError = event.value;
+        }
+      };
+
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        reply += decoder.decode(value, { stream: true });
-        if (!frame) frame = requestAnimationFrame(paint);
-      }
-      reply += decoder.decode();
-    } catch (err) {
-      if (err.name !== "AbortError") {
-        if (!reply) {
-          // Roll back the unanswered user message so the conversation stays valid.
-          chat.messages.pop();
-          bubble.remove();
-          thread.lastElementChild?.remove();
-          input.value = text;
-          autosize();
-          showError(err.message || "Network error — please try again.");
+        buffer += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buffer.indexOf("\n")) !== -1) {
+          handle(buffer.slice(0, nl));
+          buffer = buffer.slice(nl + 1);
         }
       }
+      handle(buffer + decoder.decode());
+    } catch (err) {
+      if (err.name !== "AbortError") streamError = friendlyNetworkError(err);
     } finally {
       if (frame) cancelAnimationFrame(frame);
       controller = null;
       setBusy(false);
     }
 
-    if (reply.trim()) {
-      body.innerHTML = renderMarkdown(reply);
-      decorateCode(body);
-      addActions(bubble, reply);
-      chat.messages.push({ role: "assistant", content: reply });
+    if (answer.trim()) {
+      if (streamError) answer += `\n\n_(${streamError})_`;
+      const message = { role: "assistant", content: answer };
+      if (sources.length) message.sources = sources;
+      chat.messages.push(message);
       chat.updated = Date.now();
-      save();
-    } else if (bubble.isConnected) {
-      // Stopped before any text arrived: drop the empty reply and the unanswered message.
+      if (current === chat) finishAssistant(bubble, message, { isLast: true });
+    } else {
+      // No answer: take the unanswered message back out of the history and offer a retry.
       bubble.remove();
       if (chat.messages.at(-1)?.role === "user") chat.messages.pop();
-      thread.lastElementChild?.remove();
-      input.value = text;
-      autosize();
+      if (current === chat) {
+        if (streamError) showFailure(chat, text, userEl, streamError);
+        else {
+          // Stopped before anything arrived: put the text back so it can be edited and resent.
+          userEl?.remove();
+          input.value = text;
+          autosize();
+        }
+      }
+      if (!chat.messages.length && current === chat) {
+        current = null;
+        if (!thread.children.length) empty.hidden = false;
+      }
     }
 
-    if (!chat.messages.length) {
-      chats = chats.filter((c) => c !== chat);
-      if (current === chat) current = null;
-      empty.hidden = thread.children.length > 0;
-    }
     save();
     renderSidebar();
     scrollToBottom();
-  }
-
-  function showError(message) {
-    const note = document.createElement("p");
-    note.className = "error-note";
-    note.setAttribute("role", "alert");
-    note.textContent = message;
-    thread.append(note);
-    empty.hidden = true;
-    scrollToBottom(true);
-    setTimeout(() => {
-      note.remove();
-      if (!thread.children.length) empty.hidden = false;
-    }, 6000);
   }
 
   // ---------- composer ----------
@@ -391,9 +567,7 @@
     else send(input.value);
   });
 
-  document.querySelectorAll(".suggestions button").forEach((btn) =>
-    btn.addEventListener("click", () => send(btn.textContent))
-  );
+  document.querySelectorAll(".suggestions button").forEach((btn) => btn.addEventListener("click", () => send(btn.textContent)));
 
   // ---------- sidebar (mobile) ----------
   const openBtn = $(".sidebar-open");
@@ -417,6 +591,7 @@
 
   // ---------- init ----------
   applyTheme(root.dataset.theme === "light" ? "light" : "dark");
+  applySearch(searchOn);
   renderSidebar();
   renderThread();
   autosize();
