@@ -12,7 +12,9 @@
 //   GROQ_MODEL         - optional first Groq model; defaults to openai/gpt-oss-120b
 //   GEMINI_API_KEY     - key from https://aistudio.google.com (Get API key)
 //   GEMINI_MODEL       - optional first Gemini model; defaults to gemini-3.8-flash
-//   AI_PROVIDER_ORDER  - optional, "groq,gemini" (default) or "gemini,groq"
+//   VERTEX_API_KEY     - Vertex AI express-mode key (Google Cloud console > Vertex AI)
+//   VERTEX_MODEL       - optional first Vertex model; defaults to gemini-3-flash-preview
+//   AI_PROVIDER_ORDER  - optional, e.g. "groq,vertex,gemini" (the default)
 //
 // Every provider and model has its own rate limit, so when one is busy (HTTP 429) or failing,
 // the request moves on to the next model in the chain instead of showing an error.
@@ -22,6 +24,10 @@ const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b
 
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"];
+
+// Vertex AI express mode (API key, no project/location in the URL).
+const VERTEX_URL = "https://aiplatform.googleapis.com/v1/publishers/google/models";
+const VERTEX_MODELS = ["gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
 
 const MAX_OUTPUT_TOKENS = 4096;
 
@@ -132,11 +138,19 @@ function buildChain() {
     groq: process.env.GROQ_API_KEY
       ? unique([process.env.GROQ_MODEL, ...GROQ_MODELS]).map((model) => ({ provider: "groq", model }))
       : [],
+    vertex: process.env.VERTEX_API_KEY
+      ? unique([process.env.VERTEX_MODEL, ...VERTEX_MODELS]).map((model) => ({ provider: "vertex", model }))
+      : [],
     gemini: process.env.GEMINI_API_KEY
       ? unique([process.env.GEMINI_MODEL, ...GEMINI_MODELS]).map((model) => ({ provider: "gemini", model }))
       : [],
   };
-  const order = unique([...(process.env.AI_PROVIDER_ORDER || "").toLowerCase().split(/[\s,]+/), "groq", "gemini"]);
+  const order = unique([
+    ...(process.env.AI_PROVIDER_ORDER || "").toLowerCase().split(/[\s,]+/),
+    "groq",
+    "vertex",
+    "gemini",
+  ]);
   return order.flatMap((name) => chains[name] || []);
 }
 
@@ -195,33 +209,39 @@ function handleGroqChunk(chunk, out) {
 }
 
 // ---------------------------------------------------------------------------
-// Google Gemini API (AI Studio key)
+// Google Gemini (Gemini API with an AI Studio key, or Vertex AI express mode)
 // ---------------------------------------------------------------------------
 
 const geminiSupportsThinkingLevel = (model) => /^gemini-([3-9]|\d\d)/.test(model);
 
-function callGemini({ model, history, search, safe, signal }) {
-  const generationConfig = { maxOutputTokens: MAX_OUTPUT_TOKENS };
-  // Gemini 3+ thinks by default; a low thinking level keeps replies fast.
-  if (!safe && geminiSupportsThinkingLevel(model)) generationConfig.thinkingConfig = { thinkingLevel: "low" };
+/** Build a call function for a Gemini endpoint (Gemini API or Vertex AI express mode). */
+function geminiCaller({ baseUrl, keyEnv, searchTool }) {
+  return function callGoogle({ model, history, search, safe, signal }) {
+    const generationConfig = { maxOutputTokens: MAX_OUTPUT_TOKENS };
+    // Gemini 3+ thinks by default; a low thinking level keeps replies fast.
+    if (!safe && geminiSupportsThinkingLevel(model)) generationConfig.thinkingConfig = { thinkingLevel: "low" };
 
-  const payload = {
-    systemInstruction: { parts: [{ text: systemPrompt(search) }] },
-    contents: history.map(({ role, content }) => ({
-      role: role === "assistant" ? "model" : "user",
-      parts: [{ text: content }],
-    })),
-    generationConfig,
+    const payload = {
+      systemInstruction: { parts: [{ text: systemPrompt(search) }] },
+      contents: history.map(({ role, content }) => ({
+        role: role === "assistant" ? "model" : "user",
+        parts: [{ text: content }],
+      })),
+      generationConfig,
+    };
+    if (search) payload.tools = [searchTool];
+
+    return fetch(`${baseUrl}/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+      method: "POST",
+      headers: { "x-goog-api-key": process.env[keyEnv], "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal,
+    });
   };
-  if (search) payload.tools = [{ google_search: {} }];
-
-  return fetch(`${GEMINI_URL}/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
-    method: "POST",
-    headers: { "x-goog-api-key": process.env.GEMINI_API_KEY, "content-type": "application/json" },
-    body: JSON.stringify(payload),
-    signal,
-  });
 }
+
+const callGemini = geminiCaller({ baseUrl: GEMINI_URL, keyEnv: "GEMINI_API_KEY", searchTool: { google_search: {} } });
+const callVertex = geminiCaller({ baseUrl: VERTEX_URL, keyEnv: "VERTEX_API_KEY", searchTool: { googleSearch: {} } });
 
 const GEMINI_BLOCKED = new Set(["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION"]);
 
@@ -252,6 +272,7 @@ function handleGeminiChunk(chunk, out) {
 const PROVIDERS = {
   groq: { call: callGroq, handle: handleGroqChunk, supportsSearch: groqSupportsSearch },
   gemini: { call: callGemini, handle: handleGeminiChunk, supportsSearch: () => true },
+  vertex: { call: callVertex, handle: handleGeminiChunk, supportsSearch: () => true },
 };
 
 // ---------------------------------------------------------------------------
