@@ -11,12 +11,11 @@
 //   sync:chats    id -> chat JSON
 //   sync:deleted  id -> deletion timestamp (so other devices remove it too)
 
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { redis, pipeline, redisConfigured } from "./_redis.js";
+import { isOwner, makeToken, sameText } from "./_auth.js";
 
 const CHATS_KEY = "sync:chats";
 const DELETED_KEY = "sync:deleted";
-const SESSION_DAYS = 180;
 const MAX_CHATS = 500;
 const MAX_CHAT_BYTES = 300_000;
 const MAX_BATCH = 50;
@@ -28,30 +27,6 @@ function json(status, body) {
     status,
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
-}
-
-const secret = () => `${process.env.SYNC_SECRET || ""}|${process.env.OWNER_PASSWORD || ""}`;
-const sign = (payload) => createHmac("sha256", secret()).update(payload).digest("base64url");
-
-function makeToken() {
-  const exp = Date.now() + SESSION_DAYS * 86_400_000;
-  const payload = `owner.${exp}`;
-  return `${payload}.${sign(payload)}`;
-}
-
-function sameText(a, b) {
-  const ha = createHash("sha256").update(String(a)).digest();
-  const hb = createHash("sha256").update(String(b)).digest();
-  return timingSafeEqual(ha, hb);
-}
-
-function authorized(request) {
-  const token = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
-  const parts = token.split(".");
-  if (parts.length !== 3 || parts[0] !== "owner") return false;
-  const exp = Number(parts[1]);
-  if (!Number.isFinite(exp) || exp < Date.now()) return false;
-  return sameText(parts[2], sign(`${parts[0]}.${parts[1]}`));
 }
 
 /** Check and normalise a chat object from the browser. Returns null if invalid. */
@@ -183,7 +158,7 @@ async function handle(request, method) {
   try {
     if (method === "POST" && action === "login") return await login(request);
     if (!process.env.OWNER_PASSWORD) return json(500, { error: "Sync isn't set up yet (no OWNER_PASSWORD)." });
-    if (!authorized(request)) return json(401, { error: "Please sign in again." });
+    if (!isOwner(request)) return json(401, { error: "Please sign in again." });
     if (method === "GET") return await pull();
     if (method === "POST") return await push(request);
     return json(405, { error: "Method not allowed." });

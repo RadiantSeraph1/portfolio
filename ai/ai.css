@@ -729,6 +729,27 @@ svg.lucide {
   gap: 0.5rem;
 }
 
+.composer-row .composer-spacer {
+  flex: 1;
+}
+
+.composer-row {
+  justify-content: flex-start !important;
+}
+
+.tool-toggle.claude-toggle[aria-pressed="true"] {
+  border-color: color-mix(in srgb, #d97757 60%, transparent);
+  background: color-mix(in srgb, #d97757 16%, transparent);
+  color: #e08a6d;
+}
+
+.model-label {
+  align-self: center;
+  margin-left: 0.35rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
 .tool-toggle {
   display: inline-flex;
   align-items: center;
