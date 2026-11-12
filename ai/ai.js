@@ -2,6 +2,7 @@
   const STORE_KEY = "radiant-ai-chats";
   const THEME_KEY = "samuel-portfolio-theme";
   const SEARCH_KEY = "radiant-ai-search";
+  const MODEL_KEY = "radiant-ai-model";
   const MAX_SAVED_CHATS = 200;
   const SYNC_TOKEN_KEY = "radiant-ai-sync-token";
   const SYNC_STATE_KEY = "radiant-ai-sync-state";
@@ -20,6 +21,7 @@
   const titleEl = $(".chat-title");
   const themeToggle = $(".theme-toggle");
   const searchToggle = $("#search-toggle");
+  const claudeToggle = $("#claude-toggle");
 
   /**
    * Saved chats. Each message is {role, content} plus optional `sources` on assistant replies.
@@ -82,6 +84,24 @@
   }
 
   searchToggle.addEventListener("click", () => applySearch(!searchOn));
+
+  // Claude (owner only): the toggle appears once signed in with Sync chats.
+  let claudeOn = false;
+  try {
+    claudeOn = localStorage.getItem(MODEL_KEY) === "claude";
+  } catch {}
+
+  function applyClaude(on) {
+    claudeOn = on;
+    claudeToggle.setAttribute("aria-pressed", String(on));
+    claudeToggle.title = on ? "Answering with Claude (uses your Anthropic credits)" : "Answer with Claude (owner only)";
+    input.placeholder = on ? "Ask Claude" : "Ask anything";
+    try {
+      localStorage.setItem(MODEL_KEY, on ? "claude" : "auto");
+    } catch {}
+  }
+
+  claudeToggle.addEventListener("click", () => applyClaude(!claudeOn));
 
   // ---------- markdown ----------
   function renderMarkdown(text) {
@@ -217,6 +237,12 @@
       })
     );
     if (isLast) actions.append(actionBtn("refresh-cw", "Regenerate response", () => regenerate()));
+    if (message.model) {
+      const label = document.createElement("span");
+      label.className = "model-label";
+      label.textContent = message.model;
+      actions.append(label);
+    }
     content.append(actions);
     icons();
   }
@@ -486,10 +512,14 @@
       scrollToBottom();
     };
 
+    const useClaude = claudeOn && Boolean(syncToken);
     const payload = JSON.stringify({
       messages: chat.messages.map(({ role, content }) => ({ role, content })),
       search: searchOn,
+      ...(useClaude ? { model: "claude" } : {}),
     });
+    const authHeader = syncToken ? { authorization: `Bearer ${syncToken}` } : {};
+    let answeredBy = "";
 
     const handle = (line) => {
       if (!line.trim()) return;
@@ -508,6 +538,8 @@
         sources = event.value;
       } else if (event.type === "error") {
         streamError = event.value;
+      } else if (event.type === "model" && typeof event.value === "string") {
+        answeredBy = event.value.slice(0, 60);
       } else if (event.type === "debug") {
         console.debug("[Radiant AI]", event.value);
       }
@@ -534,7 +566,7 @@
         try {
           res = await fetch("/api/chat", {
             method: "POST",
-            headers: { "content-type": "application/json" },
+            headers: { "content-type": "application/json", ...authHeader },
             body: payload,
             signal: attemptCtrl.signal,
           });
@@ -609,6 +641,7 @@
       if (streamError) answer += `\n\n_(${streamError})_`;
       const message = { role: "assistant", content: answer };
       if (sources.length) message.sources = sources;
+      if (answeredBy) message.model = answeredBy;
       chat.messages.push(message);
       chat.updated = Date.now();
       if (current === chat) finishAssistant(bubble, message, { isLast: true });
@@ -711,6 +744,7 @@
 
   function renderSyncButton() {
     const on = Boolean(syncToken);
+    claudeToggle.hidden = !on;
     syncBtn.classList.toggle("is-on", on);
     const icon = !on ? "cloud-off" : syncProblem ? "cloud-alert" : syncing ? "refresh-cw" : "cloud";
     const text = !on ? "Sync chats" : syncProblem ? "Sync paused" : syncing ? "Syncing…" : "Synced · Sign out";
@@ -893,6 +927,19 @@
   // ---------- init ----------
   applyTheme(root.dataset.theme === "light" ? "light" : "dark");
   applySearch(searchOn);
+  applyClaude(claudeOn);
+
+  // Links like /ai?prompt=...&model=claude (used by the project dashboard) prefill the composer.
+  try {
+    const params = new URLSearchParams(location.search);
+    const prompt = params.get("prompt");
+    if (params.get("model") === "claude") applyClaude(true);
+    if (prompt) {
+      input.value = prompt.slice(0, 8000);
+      requestAnimationFrame(autosize);
+    }
+    if (params.has("prompt") || params.has("model")) history.replaceState(null, "", location.pathname);
+  } catch {}
   renderSidebar();
   renderThread();
   autosize();

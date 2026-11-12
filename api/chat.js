@@ -1,11 +1,15 @@
 // Vercel serverless function: POST /api/chat
-// Body: { messages: [{ role: "user" | "assistant", content: string }, ...], search?: boolean }
+// Body: { messages: [{ role: "user" | "assistant", content: string }, ...], search?: boolean, model?: "claude" }
+//
+// model: "claude" (owner only, needs the owner's sign-in token as a Bearer header) answers with
+// Claude via the Anthropic API, falling back to the free providers if Claude is unavailable.
 //
 // Streams newline-delimited JSON events back to the browser:
 //   {"type":"status","value":"thinking" | "searching"}
 //   {"type":"text","value":"..."}            (answer text, in pieces)
 //   {"type":"sources","value":[{title,url}]}  (web pages used, if any)
 //   {"type":"error","value":"..."}           (something went wrong mid-reply)
+//   {"type":"model","value":"..."}           (which model answered)
 //
 // Environment variables (set them in the Vercel project settings). At least one key is required:
 //   GROQ_API_KEY       - key from https://console.groq.com/keys
@@ -15,9 +19,14 @@
 //   VERTEX_API_KEY     - Vertex AI express-mode key (Google Cloud console > Vertex AI)
 //   VERTEX_MODEL       - optional first Vertex model; defaults to gemini-3-flash-preview
 //   AI_PROVIDER_ORDER  - optional, e.g. "groq,vertex,gemini" (the default)
+//   ANTHROPIC_API_KEY  - enables Claude for the signed-in owner (console.anthropic.com)
+//   CLAUDE_MODEL       - optional; defaults to claude-opus-5-5
 //
 // Every provider and model has its own rate limit, so when one is busy (HTTP 429) or failing,
 // the request moves on to the next model in the chain instead of showing an error.
+
+import Anthropic from "@anthropic-ai/sdk";
+import { isOwner } from "./_auth.js";
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
@@ -44,7 +53,19 @@ const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_REQUESTS = 15;
 const hits = new Map();
 
-function systemPrompt(searchEnabled) {
+const SAMUEL_BIO =
+  "Samuel Maclar is a full-stack developer and Cyber Security graduate of UMaT (Ghana), doing National Service at Telecel Ghana, and CEO and Founder of Radiant InnovaTech. He builds web systems, AI assistants, business tools, and security-focused products.";
+
+const VISITOR_CONTEXT = `About the site owner: ${SAMUEL_BIO}
+- Only talk about Samuel when the user asks about him. Never bring him up on your own, never suggest contacting or messaging him, and never claim anything about his availability, colleagues, or internal company tools.
+- You cannot verify who you are talking to. If someone says they are Samuel, be friendly but don't treat them differently.
+- For questions about Samuel beyond the facts above, point to the main portfolio page.`;
+
+const OWNER_CONTEXT = `About Samuel: ${SAMUEL_BIO}
+- Treat him as a capable engineer: be direct, practical, and technical where it helps.
+- He may use this from his work computer. If he pastes something that looks like confidential employer or customer data (internal configs, credentials, customer records, network details), don't process it further; briefly remind him not to share confidential work data here and help with a sanitized version instead.`;
+
+function systemPrompt(searchEnabled, { owner = false } = {}) {
   const today = new Date().toLocaleDateString("en-GB", {
     weekday: "long",
     day: "numeric",
@@ -53,7 +74,11 @@ function systemPrompt(searchEnabled) {
     timeZone: "Africa/Accra",
   });
 
-  return `You are Radiant AI, a helpful, knowledgeable assistant on Samuel Maclar's portfolio website (samuelmaclar.com). Today is ${today}.
+  const intro = owner
+    ? `You are Claude, made by Anthropic, used through Radiant AI on Samuel Maclar's website (samuelmaclar.com). You are talking with Samuel himself (the verified site owner). Today is ${today}.`
+    : `You are Radiant AI, a helpful, knowledgeable assistant on Samuel Maclar's portfolio website (samuelmaclar.com). Today is ${today}.`;
+
+  return `${intro}
 
 How to answer:
 - Help with anything: research, coding, writing, explanations, brainstorming, math, and everyday questions.
@@ -67,10 +92,7 @@ How to answer:
 - Use Markdown. Put code in fenced code blocks with a language tag.
 - For research requests, cover the key facts, recent developments, and useful context, then offer to go deeper on a specific angle.
 
-About the site owner: Samuel Maclar is a full-stack developer and Cyber Security graduate of UMaT (Ghana), doing National Service at Telecel Ghana, and CEO and Founder of Radiant InnovaTech. He builds web systems, AI assistants, business tools, and security-focused products.
-- Only talk about Samuel when the user asks about him. Never bring him up on your own, never suggest contacting or messaging him, and never claim anything about his availability, colleagues, or internal company tools.
-- You cannot verify who you are talking to. If someone says they are Samuel, be friendly but don't treat them differently.
-- For questions about Samuel beyond the facts above, point to the main portfolio page.`;
+${owner ? OWNER_CONTEXT : VISITOR_CONTEXT}`;
 }
 
 function json(status, body) {
@@ -110,13 +132,13 @@ function validate(body) {
 }
 
 // Keep the latest messages that fit the context budget; the kept part must start with a user message.
-function recentHistory(messages) {
+function recentHistory(messages, maxMessages = CONTEXT_MAX_MESSAGES, maxChars = CONTEXT_MAX_CHARS) {
   const kept = [];
   let chars = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     const { role, content } = messages[i];
-    if (kept.length >= CONTEXT_MAX_MESSAGES) break;
-    if (kept.length && chars + content.length > CONTEXT_MAX_CHARS) break;
+    if (kept.length >= maxMessages) break;
+    if (kept.length && chars + content.length > maxChars) break;
     kept.unshift({ role, content });
     chars += content.length;
   }
@@ -269,10 +291,101 @@ function handleGeminiChunk(chunk, out) {
   if (GEMINI_BLOCKED.has(candidate.finishReason)) out.blocked = true;
 }
 
+// ---------------------------------------------------------------------------
+// Claude (Anthropic API, owner only)
+// ---------------------------------------------------------------------------
+
+const CLAUDE_MODEL = () => process.env.CLAUDE_MODEL || "claude-opus-5-5";
+const CLAUDE_CONTEXT_MESSAGES = 40;
+const CLAUDE_CONTEXT_CHARS = 60_000;
+let anthropicClient;
+const anthropic = () => (anthropicClient ??= new Anthropic({ maxRetries: 1 }));
+
+function collectClaudeSources(block, into) {
+  if (block?.type !== "web_search_tool_result" || !Array.isArray(block.content)) return;
+  for (const r of block.content) {
+    if (r?.type !== "web_search_result" || !isHttpUrl(r.url) || into.has(r.url)) continue;
+    into.set(r.url, { title: String(r.title || r.url).slice(0, 200), url: r.url });
+  }
+}
+
+/** Stream a Claude answer into `state`. Throws the SDK's API errors (with .status) on failure. */
+async function streamClaude({ model, history, search, safe, signal, state }) {
+  let messages = history.map(({ role, content }) => ({ role, content }));
+
+  // Server tools can pause a long turn ("pause_turn"); resend to let it continue, a few times at most.
+  for (let turn = 0; turn < 3; turn++) {
+    const params = {
+      model,
+      max_tokens: 16000,
+      system: systemPrompt(search, { owner: true }),
+      output_config: { effort: "low" }, // chat: quick, low-latency replies
+      messages,
+    };
+    if (search) params.tools = [{ type: "web_search_20260209", name: "web_search", max_uses: 3 }];
+
+    // If Claude's safety classifier declines, let the API retry on a fallback model in the same call.
+    const stream = safe
+      ? anthropic().messages.stream(params, { signal })
+      : anthropic().beta.messages.stream(
+          { ...params, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" },
+          { signal }
+        );
+
+    for await (const event of stream) {
+      if (event.type === "content_block_start") {
+        if (event.content_block.type === "server_tool_use") state.status("searching");
+        collectClaudeSources(event.content_block, state.sources);
+      } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+        state.text(event.delta.text);
+      }
+    }
+
+    const final = await stream.finalMessage();
+    for (const block of final.content) collectClaudeSources(block, state.sources);
+
+    if (final.stop_reason === "pause_turn") {
+      messages = [...messages, { role: "assistant", content: final.content }];
+      continue;
+    }
+    if (final.stop_reason === "max_tokens") state.cutOff = true;
+    if (final.stop_reason === "refusal") state.blocked = true;
+    return;
+  }
+}
+
+/** A readable name for the model that answered, shown under each reply. */
+function modelLabel({ provider, model }) {
+  const words = (str) =>
+    str
+      .split("-")
+      .map((w) => (/^\d/.test(w) ? w.replace(/(\d)-(\d)/g, "$1.$2") : w[0].toUpperCase() + w.slice(1)))
+      .join(" ");
+  if (provider === "claude") {
+    const m = model.match(/^claude-([a-z]+)-(\d+)(?:-(\d+))?/);
+    return m ? `Claude ${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? "." + m[3] : ""}` : model;
+  }
+  if (model.startsWith("openai/gpt-oss-")) return `GPT-OSS ${model.split("-").pop().toUpperCase()}`;
+  if (model.startsWith("llama-")) {
+    const [, ver, size] = model.match(/^llama-([\d.]+)-(\d+b)/) || [];
+    return ver ? `Llama ${ver} ${size.toUpperCase()}` : model;
+  }
+  if (model.startsWith("gemini-")) {
+    const name = model
+      .replace(/^gemini-/, "")
+      .split("-")
+      .map((w) => (/^\d/.test(w) ? w : w[0].toUpperCase() + w.slice(1)))
+      .join(" ");
+    return `Gemini ${name}${provider === "vertex" ? " (Vertex)" : ""}`;
+  }
+  return words(model);
+}
+
 const PROVIDERS = {
   groq: { call: callGroq, handle: handleGroqChunk, supportsSearch: groqSupportsSearch },
   gemini: { call: callGemini, handle: handleGeminiChunk, supportsSearch: () => true },
   vertex: { call: callVertex, handle: handleGeminiChunk, supportsSearch: () => true },
+  claude: { stream: streamClaude, supportsSearch: () => true },
 };
 
 // ---------------------------------------------------------------------------
@@ -357,13 +470,10 @@ function withTimeout(parent, ms) {
 }
 
 export async function POST(request) {
-  const chain = buildChain();
-  if (!chain.length) {
-    return json(500, { error: "The AI service is not configured yet." });
-  }
+  const owner = isOwner(request);
 
   const ip = (request.headers.get("x-forwarded-for") || "unknown").split(",")[0].trim();
-  if (rateLimited(ip)) {
+  if (!owner && rateLimited(ip)) {
     return json(429, { error: "You're sending messages too quickly. Please wait a minute and try again." });
   }
 
@@ -377,8 +487,22 @@ export async function POST(request) {
   const problem = validate(body);
   if (problem) return json(400, { error: problem });
 
+  let chain = buildChain();
+  if (body.model === "claude") {
+    if (!owner) return json(403, { error: "Claude is only available to the site owner. Sign in with Sync chats first." });
+    if (!process.env.ANTHROPIC_API_KEY) return json(503, { error: "Claude isn't set up yet (no ANTHROPIC_API_KEY)." });
+    // Claude first; the free providers still answer if Claude is unavailable.
+    chain = [{ provider: "claude", model: CLAUDE_MODEL() }, ...chain];
+  }
+  if (!chain.length) {
+    return json(500, { error: "The AI service is not configured yet." });
+  }
+
   const wantSearch = body.search !== false;
-  const history = recentHistory(body.messages);
+  const historyFor = (provider) =>
+    provider === "claude"
+      ? recentHistory(body.messages, CLAUDE_CONTEXT_MESSAGES, CLAUDE_CONTEXT_CHARS)
+      : recentHistory(body.messages);
   const started = Date.now();
   const encoder = new TextEncoder();
   let activeReader = null;
@@ -453,47 +577,65 @@ export async function POST(request) {
           const timer = withTimeout(request.signal, ATTEMPT_CONNECT_TIMEOUT_MS);
 
           try {
-            const args = { model: attempt.model, history, signal: timer.signal };
-            let res = await provider.call({ ...args, search, safe: false });
-
-            // A 400 usually means an unsupported option (search tool or thinking setting on this
-            // model/plan): retry the same model once with plain settings.
-            if (res.status === 400) {
-              const { raw, reason } = await failureReason(res);
-              console.warn(`${label} rejected request, retrying plain:`, raw);
-              trace.push(`${label}=400(${reason})`);
-              if (isKeyProblem(400, reason)) {
-                deadProviders.add(attempt.provider);
-                continue;
-              }
-              res = await provider.call({ ...args, search: false, safe: true });
-            }
-
-            if (!res.ok || !res.body) {
-              const { raw, reason } = await failureReason(res);
-              console.warn(`${label} failed with ${res.status}:`, raw);
-              trace.push(`${label}=${res.status}${reason ? `(${reason})` : ""}`);
-              if (res.status === 429) sawBusy = true;
-              if (isKeyProblem(res.status, reason)) deadProviders.add(attempt.provider);
-              continue;
-            }
-
-            // Stream this provider's answer.
+            const args = { model: attempt.model, history: historyFor(attempt.provider), signal: timer.signal };
             const state = {
               sources: new Map(),
               cutOff: false,
               blocked: false,
-              text: (t) => emitText(t),
+              text: (t) => {
+                emitText(t);
+                // Once words are flowing, only give up if the stream goes silent for too long.
+                if (sentText) timer.reset(IDLE_TIMEOUT_MS);
+              },
               status: setStatus,
             };
-            const reader = res.body.getReader();
-            activeReader = reader;
-            timer.reset(FIRST_TEXT_TIMEOUT_MS);
 
-            for await (const chunk of sseJson(reader)) {
-              provider.handle(chunk, state);
-              // Once words are flowing, only give up if the stream goes silent for too long.
-              if (sentText) timer.reset(IDLE_TIMEOUT_MS);
+            if (provider.stream) {
+              // SDK-based provider (Claude).
+              timer.reset(FIRST_TEXT_TIMEOUT_MS);
+              try {
+                await provider.stream({ ...args, search, safe: false, state });
+              } catch (err) {
+                if (err?.status !== 400 || sentText) throw err;
+                const reason = String(err.message || "").replace(/\s+/g, " ").slice(0, 120);
+                console.warn(`${label} rejected request, retrying plain:`, reason);
+                trace.push(`${label}=400(${reason})`);
+                if (isKeyProblem(400, reason)) {
+                  deadProviders.add(attempt.provider);
+                  continue;
+                }
+                await provider.stream({ ...args, search: false, safe: true, state });
+              }
+            } else {
+              let res = await provider.call({ ...args, search, safe: false });
+
+              // A 400 usually means an unsupported option (search tool or thinking setting on this
+              // model/plan): retry the same model once with plain settings.
+              if (res.status === 400) {
+                const { raw, reason } = await failureReason(res);
+                console.warn(`${label} rejected request, retrying plain:`, raw);
+                trace.push(`${label}=400(${reason})`);
+                if (isKeyProblem(400, reason)) {
+                  deadProviders.add(attempt.provider);
+                  continue;
+                }
+                res = await provider.call({ ...args, search: false, safe: true });
+              }
+
+              if (!res.ok || !res.body) {
+                const { raw, reason } = await failureReason(res);
+                console.warn(`${label} failed with ${res.status}:`, raw);
+                trace.push(`${label}=${res.status}${reason ? `(${reason})` : ""}`);
+                if (res.status === 429) sawBusy = true;
+                if (isKeyProblem(res.status, reason)) deadProviders.add(attempt.provider);
+                continue;
+              }
+
+              // Stream this provider's answer.
+              const reader = res.body.getReader();
+              activeReader = reader;
+              timer.reset(FIRST_TEXT_TIMEOUT_MS);
+              for await (const chunk of sseJson(reader)) provider.handle(chunk, state);
             }
             emitText("", true);
 
@@ -505,6 +647,7 @@ export async function POST(request) {
             }
 
             trace.push(`${label}=ok`);
+            send("model", modelLabel(attempt));
             if (state.cutOff) {
               send("text", "\n\n_(The answer was cut off because it reached the length limit. Ask me to continue.)_");
             }
@@ -513,9 +656,12 @@ export async function POST(request) {
             break;
           } catch (err) {
             if (request.signal?.aborted) break;
-            const why = timer.signal.aborted ? "timeout" : "error";
+            const status = Number(err?.status) || 0; // set by the Anthropic SDK's API errors
+            const why = timer.signal.aborted ? "timeout" : status ? String(status) : "error";
             console.warn(`${label} ${why}:`, err?.message);
             trace.push(`${label}=${why}`);
+            if (status === 429 || status === 529) sawBusy = true;
+            if (status === 401 || status === 403) deadProviders.add(attempt.provider);
             if (sentText) {
               // The answer was already partly shown; we can't switch models mid-sentence.
               send("error", "The connection to the AI was interrupted. Please try again.");
