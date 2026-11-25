@@ -96,13 +96,18 @@
     searchToggle.classList.toggle("unavailable", limited);
   }
 
+  let wantClaude = false;
+
   async function loadModels() {
     try {
-      const res = await fetch("/api/chat");
+      const res = await fetch("/api/chat", { headers: syncToken ? { authorization: `Bearer ${syncToken}` } : {} });
       if (!res.ok) return;
       const { providers } = await res.json();
       const total = (providers || []).reduce((n, p) => n + p.models.length, 0);
-      if (total < 2) return;
+      if (total < 2) {
+        modelPicker.hidden = true;
+        return;
+      }
 
       modelSelect.innerHTML = "";
       modelSelect.append(new Option("Auto (best available)", ""));
@@ -121,6 +126,12 @@
       } catch {}
       modelSelect.value = saved;
       if (modelSelect.value !== saved) modelSelect.value = ""; // that model is no longer available
+      // A link like /ai?prompt=...&model=claude (used by the project dashboard) picks Claude for you.
+      if (wantClaude) {
+        wantClaude = false;
+        const claude = [...modelSelect.options].find((o) => o.value.startsWith("claude|"));
+        if (claude) modelSelect.value = claude.value;
+      }
       readModelSelect();
       modelPicker.hidden = false;
     } catch {
@@ -763,7 +774,7 @@
         try {
           res = await fetch("/api/chat", {
             method: "POST",
-            headers: { "content-type": "application/json" },
+            headers: { "content-type": "application/json", ...(syncToken ? { authorization: `Bearer ${syncToken}` } : {}) },
             body: payload,
             signal: attemptCtrl.signal,
           });
@@ -1066,6 +1077,7 @@
       localStorage.removeItem(SYNC_TOKEN_KEY);
     } catch {}
     renderSyncButton();
+    loadModels();
     if (message) alert(message);
   }
 
@@ -1104,6 +1116,7 @@
       saveSyncState();
       syncDialog.close();
       syncNow();
+      loadModels();
     } catch (err) {
       syncError.textContent = navigator.onLine ? err.message : "You're offline.";
       syncError.hidden = false;
@@ -1134,6 +1147,17 @@
   // ---------- init ----------
   applyTheme(root.dataset.theme === "light" ? "light" : "dark");
   applySearch(searchOn);
+  try {
+    // Links like /ai?prompt=...&model=claude (used by the project dashboard) prefill the composer.
+    const deep = new URLSearchParams(location.search);
+    wantClaude = deep.get("model") === "claude";
+    const prompt = deep.get("prompt");
+    if (prompt) {
+      input.value = prompt.slice(0, 8000);
+      requestAnimationFrame(autosize);
+    }
+    if (deep.has("prompt") || deep.has("model")) history.replaceState(null, "", location.pathname);
+  } catch {}
   loadModels();
   renderSidebar();
   renderThread();

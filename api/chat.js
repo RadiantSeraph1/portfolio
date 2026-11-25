@@ -27,10 +27,14 @@
 //   VERTEX_API_KEY     - Vertex AI express-mode key (Google Cloud console > Vertex AI)
 //   VERTEX_MODEL       - optional first Vertex model; defaults to gemini-3-flash-preview
 //   AI_PROVIDER_ORDER  - optional, e.g. "nvidia,groq,vertex,gemini" (the default)
+//   ANTHROPIC_API_KEY  - enables Claude for the signed-in owner (console.anthropic.com)
+//   CLAUDE_MODEL       - optional first Claude model; defaults to claude-opus-5-5
 //
 // Every provider and model has its own rate limit, so when one is busy (HTTP 429) or failing,
 // the request moves on to the next model in the chain instead of showing an error.
 
+import Anthropic from "@anthropic-ai/sdk";
+import { isOwner } from "./_owner.js";
 import { fileToolDefinitions, fileToolNames, runFileTool, looksLikeFileRequest } from "./_files.js";
 
 // NVIDIA NIM hosted API (OpenAI-compatible chat completions).
@@ -64,7 +68,19 @@ const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_REQUESTS = 15;
 const hits = new Map();
 
-function systemPrompt(searchEnabled, searchWanted = false, tools = null) {
+const SAMUEL_BIO =
+  "Samuel Maclar is a full-stack developer and Cyber Security graduate of UMaT (Ghana), doing National Service at Telecel Ghana, and CEO and Founder of Radiant InnovaTech. He builds web systems, AI assistants, business tools, and security-focused products.";
+
+const VISITOR_CONTEXT = `About the site owner: ${SAMUEL_BIO}
+- Only talk about Samuel when the user asks about him. Never bring him up on your own, never suggest contacting or messaging him, and never claim anything about his availability, colleagues, or internal company tools.
+- You cannot verify who you are talking to. If someone says they are Samuel, be friendly but don't treat them differently.
+- For questions about Samuel beyond the facts above, point to the main portfolio page.`;
+
+const OWNER_CONTEXT = `About Samuel: ${SAMUEL_BIO}
+- Treat him as a capable engineer: be direct, practical, and technical where it helps.
+- He may use this from his work computer. If he pastes something that looks like confidential employer or customer data (internal configs, credentials, customer records, network details), don't process it further; briefly remind him not to share confidential work data here and help with a sanitized version instead.`;
+
+function systemPrompt(searchEnabled, searchWanted = false, tools = null, { owner = false } = {}) {
   const names = (tools || []).map((t) => t.function.name);
   const files = names.some((n) => fileToolNames.includes(n));
   const today = new Date().toLocaleDateString("en-GB", {
@@ -75,7 +91,11 @@ function systemPrompt(searchEnabled, searchWanted = false, tools = null) {
     timeZone: "Africa/Accra",
   });
 
-  return `You are Radiant AI, a helpful, knowledgeable assistant on Samuel Maclar's portfolio website (samuelmaclar.com). Today is ${today}.
+  const intro = owner
+    ? `You are Claude, made by Anthropic, used through Radiant AI on Samuel Maclar's website (samuelmaclar.com). You are talking with Samuel himself (the verified site owner). Today is ${today}.`
+    : `You are Radiant AI, a helpful, knowledgeable assistant on Samuel Maclar's portfolio website (samuelmaclar.com). Today is ${today}.`;
+
+  return `${intro}
 
 How to answer:
 - Help with anything: research, coding, writing, explanations, brainstorming, math, and everyday questions.
@@ -96,10 +116,7 @@ ${
 - Use Markdown. Put code in fenced code blocks with a language tag.
 - For research requests, cover the key facts, recent developments, and useful context, then offer to go deeper on a specific angle.
 
-About the site owner: Samuel Maclar is a full-stack developer and Cyber Security graduate of UMaT (Ghana), doing National Service at Telecel Ghana, and CEO and Founder of Radiant InnovaTech. He builds web systems, AI assistants, business tools, and security-focused products.
-- Only talk about Samuel when the user asks about him. Never bring him up on your own, never suggest contacting or messaging him, and never claim anything about his availability, colleagues, or internal company tools.
-- You cannot verify who you are talking to. If someone says they are Samuel, be friendly but don't treat them differently.
-- For questions about Samuel beyond the facts above, point to the main portfolio page.${
+${owner ? OWNER_CONTEXT : VISITOR_CONTEXT}${
     files
       ? `
 
@@ -149,13 +166,13 @@ function validate(body) {
 }
 
 // Keep the latest messages that fit the context budget; the kept part must start with a user message.
-function recentHistory(messages) {
+function recentHistory(messages, maxMessages = CONTEXT_MAX_MESSAGES, maxChars = CONTEXT_MAX_CHARS) {
   const kept = [];
   let chars = 0;
   for (let i = messages.length - 1; i >= 0; i--) {
     const { role, content } = messages[i];
-    if (kept.length >= CONTEXT_MAX_MESSAGES) break;
-    if (kept.length && chars + content.length > CONTEXT_MAX_CHARS) break;
+    if (kept.length >= maxMessages) break;
+    if (kept.length && chars + content.length > maxChars) break;
     kept.unshift({ role, content });
     chars += content.length;
   }
@@ -172,7 +189,7 @@ function unique(list) {
 }
 
 /** The ordered list of {provider, model} attempts, based on which keys are configured. */
-function buildChain() {
+function buildChain({ owner = false } = {}) {
   const chains = {
     nvidia: process.env.NVIDIA_API_KEY
       ? unique([process.env.NVIDIA_MODEL, ...NVIDIA_MODELS]).map((model) => ({ provider: "nvidia", model }))
@@ -186,6 +203,10 @@ function buildChain() {
     gemini: process.env.GEMINI_API_KEY
       ? unique([process.env.GEMINI_MODEL, ...GEMINI_MODELS]).map((model) => ({ provider: "gemini", model }))
       : [],
+    // Claude uses the owner's Anthropic credits: only for the signed-in owner, and see claudeOnlyWhenPicked().
+    claude: owner && process.env.ANTHROPIC_API_KEY
+      ? unique([process.env.CLAUDE_MODEL, ...CLAUDE_MODELS]).map((model) => ({ provider: "claude", model }))
+      : [],
   };
   const order = unique([
     ...(process.env.AI_PROVIDER_ORDER || "").toLowerCase().split(/[\s,]+/),
@@ -193,6 +214,7 @@ function buildChain() {
     "groq",
     "vertex",
     "gemini",
+    "claude",
   ]);
   return order.flatMap((name) => chains[name] || []);
 }
@@ -391,19 +413,101 @@ function handleNvidiaChunk(chunk, out) {
   if (choice?.finish_reason === "length") out.cutOff = true;
 }
 
+// ---------------------------------------------------------------------------
+// Claude (Anthropic API, owner only, only when picked)
+// ---------------------------------------------------------------------------
+
+const CLAUDE_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"];
+const CLAUDE_CONTEXT_MESSAGES = 40;
+const CLAUDE_CONTEXT_CHARS = 60_000;
+let anthropicClient;
+const anthropic = () => (anthropicClient ??= new Anthropic({ maxRetries: 1 }));
+
+function collectClaudeSources(block, into) {
+  if (block?.type !== "web_search_tool_result" || !Array.isArray(block.content)) return;
+  for (const r of block.content) {
+    if (r?.type !== "web_search_result" || !isHttpUrl(r.url) || into.has(r.url)) continue;
+    into.set(r.url, { title: String(r.title || r.url).slice(0, 200), url: r.url });
+  }
+}
+
+/**
+ * Stream a Claude answer into `state`. Throws the SDK's API errors (with .status) on failure.
+ * Server tools (web search) can pause a long turn, and file tools are run through state.runTool.
+ */
+async function streamClaude({ model, history, search, searchWanted, tools, safe, signal, state }) {
+  let messages = history.map(({ role, content }) => ({ role, content }));
+  const clientTools = (tools || []).map((t) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters }));
+  let paused = 0;
+  let toolRounds = 0;
+
+  for (let turn = 0; turn < 10; turn++) {
+    const params = {
+      model,
+      max_tokens: 16000,
+      system: systemPrompt(search, searchWanted, tools, { owner: true }),
+      output_config: { effort: "low" }, // chat: quick, low-latency replies
+      messages,
+    };
+    const toolList = [...clientTools, ...(search ? [{ type: "web_search_20260209", name: "web_search", max_uses: 3 }] : [])];
+    if (toolList.length) params.tools = toolList;
+
+    // If Claude's safety classifier declines, let the API retry on a fallback model in the same call.
+    const stream = safe
+      ? anthropic().messages.stream(params, { signal })
+      : anthropic().beta.messages.stream({ ...params, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" }, { signal });
+
+    for await (const event of stream) {
+      if (event.type === "content_block_start") {
+        if (event.content_block.type === "server_tool_use") state.status("searching");
+        collectClaudeSources(event.content_block, state.sources);
+      } else if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+        state.text(event.delta.text);
+      }
+    }
+
+    const final = await stream.finalMessage();
+    for (const block of final.content) collectClaudeSources(block, state.sources);
+
+    if (final.stop_reason === "pause_turn" && paused++ < 3) {
+      messages = [...messages, { role: "assistant", content: final.content }];
+      continue;
+    }
+
+    if (final.stop_reason === "tool_use") {
+      if (toolRounds++ >= MAX_TOOL_ROUNDS || state.timeLeft() < 12_000) {
+        state.text("\n\n_(I ran out of time before finishing. Ask me to continue.)_");
+        return;
+      }
+      const results = [];
+      for (const block of final.content.filter((b) => b.type === "tool_use")) {
+        const result = await state.runTool(block.name, block.input);
+        results.push({ type: "tool_result", tool_use_id: block.id, content: String(result.content).slice(0, MAX_TOOL_RESULT_CHARS), is_error: Boolean(result.failed) });
+      }
+      messages = [...messages, { role: "assistant", content: final.content }, { role: "user", content: results }];
+      continue;
+    }
+
+    if (final.stop_reason === "max_tokens") state.cutOff = true;
+    if (final.stop_reason === "refusal") state.blocked = true;
+    return;
+  }
+}
+
 const PROVIDERS = {
   nvidia: { call: callNvidia, handle: handleNvidiaChunk, supportsSearch: () => false, tools: true },
+  claude: { stream: streamClaude, supportsSearch: () => true, tools: true },
   groq: { call: callGroq, handle: handleGroqChunk, supportsSearch: groqSupportsSearch, tools: true },
   gemini: { call: callGemini, handle: handleGeminiChunk, supportsSearch: () => true },
   vertex: { call: callVertex, handle: handleGeminiChunk, supportsSearch: () => true },
 };
 
-const PROVIDER_LABELS = { nvidia: "NVIDIA NIM", groq: "Groq", vertex: "Google Vertex AI", gemini: "Google Gemini" };
+const PROVIDER_LABELS = { nvidia: "NVIDIA NIM", groq: "Groq", vertex: "Google Vertex AI", gemini: "Google Gemini", claude: "Claude" };
 
 /** What the model picker shows: only providers whose key is configured. No secrets. */
-function catalog() {
+function catalog({ owner = false } = {}) {
   const providers = [];
-  for (const attempt of buildChain()) {
+  for (const attempt of buildChain({ owner })) {
     let entry = providers.find((p) => p.id === attempt.provider);
     if (!entry) {
       entry = { id: attempt.provider, label: PROVIDER_LABELS[attempt.provider] || attempt.provider, models: [] };
@@ -533,13 +637,10 @@ function withTimeout(parent, ms) {
 }
 
 export async function POST(request) {
-  let chain = buildChain();
-  if (!chain.length) {
-    return json(500, { error: "The AI service is not configured yet." });
-  }
+  const owner = isOwner(request);
 
   const ip = (request.headers.get("x-forwarded-for") || "unknown").split(",")[0].trim();
-  if (rateLimited(ip)) {
+  if (!owner && rateLimited(ip)) {
     return json(429, { error: "You're sending messages too quickly. Please wait a minute and try again." });
   }
 
@@ -552,6 +653,14 @@ export async function POST(request) {
 
   const problem = validate(body);
   if (problem) return json(400, { error: problem });
+
+  // Claude spends the owner's Anthropic credits: it is only in the chain for the signed-in owner, and
+  // only answers when picked (never as the automatic choice or a fallback for another pick).
+  let chain = buildChain({ owner });
+  if (!(owner && body.provider === "claude")) chain = chain.filter((a) => a.provider !== "claude");
+  if (!chain.length) {
+    return json(500, { error: "The AI service is not configured yet." });
+  }
   chain = applyChoice(chain, body);
   const explicit = chain[0] && chain[0].provider === body.provider && chain[0].model === body.model ? chain[0] : null;
   const wantSearch = body.search !== false;
@@ -570,7 +679,8 @@ export async function POST(request) {
   }
   const allowedTools = new Set((tools || []).map((t) => t.function.name));
 
-  const history = recentHistory(body.messages);
+  const historyFor = (provider) =>
+    provider === "claude" ? recentHistory(body.messages, CLAUDE_CONTEXT_MESSAGES, CLAUDE_CONTEXT_CHARS) : recentHistory(body.messages);
   const started = Date.now();
   const encoder = new TextEncoder();
   let activeReader = null;
@@ -628,6 +738,19 @@ export async function POST(request) {
       let sawBusy = false;
       let toolsRan = false;
       const failures = []; // models that were tried first but did not answer, and why
+
+      // Run one tool call for any provider. Only tools offered for this request ever run.
+      const execTool = (name, rawArgs) => {
+        toolsRan = true;
+        send("status", "tools");
+        const result = allowedTools.has(name) ? runFileTool(name, rawArgs) : { content: `Error: unknown tool ${name}`, failed: true };
+        trace.push(`tool:${name}=${result.failed ? "error" : "ok"}`);
+        if (result.card) {
+          cards.push(result.card);
+          send("card", result.card);
+        }
+        return result;
+      };
       const cards = [];
       const deadProviders = new Set(); // providers whose key was rejected
       const isKeyProblem = (status, reason) =>
@@ -648,43 +771,13 @@ export async function POST(request) {
           let timer = null;
 
           try {
-            let convo = history;
+            let convo = historyFor(attempt.provider);
             let round = 0;
 
             for (;;) {
               timer?.clear();
               timer = withTimeout(request.signal, ATTEMPT_CONNECT_TIMEOUT_MS);
               const args = { model: attempt.model, history: convo, searchWanted: wantSearch, tools, signal: timer.signal };
-              let res = await provider.call({ ...args, search, safe: false });
-
-              // A 400 usually means an unsupported option (search tool or thinking setting on this
-              // model/plan): retry the same model once with plain settings.
-              if (res.status === 400) {
-                const { raw, reason } = await failureReason(res);
-                console.warn(`${label} rejected request, retrying plain:`, raw);
-                trace.push(`${label}=400(${reason})`);
-                if (isKeyProblem(400, reason)) {
-                  failures.push({ provider: attempt.provider, model: attempt.model, why: "key" });
-                  deadProviders.add(attempt.provider);
-                  if (toolsRan) throw new Error("provider rejected the follow-up request");
-                  continue attempts;
-                }
-                res = await provider.call({ ...args, search: false, safe: true });
-              }
-
-              if (!res.ok || !res.body) {
-                const { raw, reason } = await failureReason(res);
-                console.warn(`${label} failed with ${res.status}:`, raw);
-                trace.push(`${label}=${res.status}${reason ? `(${reason})` : ""}`);
-                if (res.status === 429) sawBusy = true;
-                if (shouldCool(res.status)) startCooldown(attempt);
-                if (isKeyProblem(res.status, reason)) deadProviders.add(attempt.provider);
-                failures.push({ provider: attempt.provider, model: attempt.model, why: String(res.status) });
-                if (toolsRan) throw new Error(`provider failed after tools ran (${res.status})`);
-                continue attempts;
-              }
-
-              // Stream this provider's answer.
               const state = {
                 sources: new Map(),
                 cutOff: false,
@@ -695,17 +788,70 @@ export async function POST(request) {
                 text: (t) => {
                   state.said += t;
                   emitText(t);
+                  // Once words are flowing, only give up if the stream goes silent for too long.
+                  if (sentText) timer.reset(IDLE_TIMEOUT_MS);
                 },
                 status: setStatus,
+                runTool: async (name, input) => execTool(name, input),
+                timeLeft: () => TOTAL_BUDGET_MS - (Date.now() - started),
               };
-              const reader = res.body.getReader();
-              activeReader = reader;
-              timer.reset(FIRST_TEXT_TIMEOUT_MS);
 
-              for await (const chunk of sseJson(reader)) {
-                provider.handle(chunk, state);
-                // Once words are flowing, only give up if the stream goes silent for too long.
-                if (sentText) timer.reset(IDLE_TIMEOUT_MS);
+              if (provider.stream) {
+                // SDK-based provider (Claude): it streams, and runs file tools through state.runTool itself.
+                timer.reset(FIRST_TEXT_TIMEOUT_MS);
+                try {
+                  await provider.stream({ ...args, search, safe: false, state });
+                } catch (err) {
+                  if (err?.status !== 400 || sentText || toolsRan) throw err;
+                  const reason = String(err.message || "").replace(/\s+/g, " ").slice(0, 120);
+                  console.warn(`${label} rejected request, retrying plain:`, reason);
+                  trace.push(`${label}=400(${reason})`);
+                  if (isKeyProblem(400, reason)) {
+                    failures.push({ provider: attempt.provider, model: attempt.model, why: "key" });
+                    deadProviders.add(attempt.provider);
+                    continue attempts;
+                  }
+                  await provider.stream({ ...args, search: false, safe: true, state });
+                }
+              } else {
+                let res = await provider.call({ ...args, search, safe: false });
+
+                // A 400 usually means an unsupported option (search tool or thinking setting on this
+                // model/plan): retry the same model once with plain settings.
+                if (res.status === 400) {
+                  const { raw, reason } = await failureReason(res);
+                  console.warn(`${label} rejected request, retrying plain:`, raw);
+                  trace.push(`${label}=400(${reason})`);
+                  if (isKeyProblem(400, reason)) {
+                    failures.push({ provider: attempt.provider, model: attempt.model, why: "key" });
+                    deadProviders.add(attempt.provider);
+                    if (toolsRan) throw new Error("provider rejected the follow-up request");
+                    continue attempts;
+                  }
+                  res = await provider.call({ ...args, search: false, safe: true });
+                }
+
+                if (!res.ok || !res.body) {
+                  const { raw, reason } = await failureReason(res);
+                  console.warn(`${label} failed with ${res.status}:`, raw);
+                  trace.push(`${label}=${res.status}${reason ? `(${reason})` : ""}`);
+                  if (res.status === 429) sawBusy = true;
+                  if (shouldCool(res.status)) startCooldown(attempt);
+                  if (isKeyProblem(res.status, reason)) deadProviders.add(attempt.provider);
+                  failures.push({ provider: attempt.provider, model: attempt.model, why: String(res.status) });
+                  if (toolsRan) throw new Error(`provider failed after tools ran (${res.status})`);
+                  continue attempts;
+                }
+
+                // Stream this provider's answer.
+                const reader = res.body.getReader();
+                activeReader = reader;
+                timer.reset(FIRST_TEXT_TIMEOUT_MS);
+
+                for await (const chunk of sseJson(reader)) {
+                  provider.handle(chunk, state);
+                  if (sentText) timer.reset(IDLE_TIMEOUT_MS);
+                }
               }
               emitText("", true);
 
@@ -719,22 +865,12 @@ export async function POST(request) {
                   break;
                 }
                 round++;
-                toolsRan = true;
                 timer.clear();
-                send("status", "tools");
 
                 const results = [];
                 for (const [i, call] of calls.entries()) {
                   call.id ||= `call_${round}_${i}`;
-                  // Only run tools that were offered for this request, whatever the model asks for.
-                  const result = allowedTools.has(call.name)
-                    ? runFileTool(call.name, call.args)
-                    : { content: `Error: unknown tool ${call.name}`, failed: true };
-                  trace.push(`tool:${call.name}=${result.failed ? "error" : "ok"}`);
-                  if (result.card) {
-                    cards.push(result.card);
-                    send("card", result.card);
-                  }
+                  const result = execTool(call.name, call.args);
                   results.push({ role: "tool", tool_call_id: call.id, content: String(result.content).slice(0, MAX_TOOL_RESULT_CHARS) });
                 }
                 const assistantTurn = {
@@ -779,7 +915,10 @@ export async function POST(request) {
             }
           } catch (err) {
             if (request.signal?.aborted) break;
-            const why = timer?.signal.aborted ? "timeout" : "error";
+            const status = Number(err?.status) || 0; // set by the Anthropic SDK's API errors
+            const why = timer?.signal.aborted ? "timeout" : status ? String(status) : "error";
+            if (status === 429 || status === 529) sawBusy = true;
+            if (status === 401 || status === 403) deadProviders.add(attempt.provider);
             if (!sentText && !toolsRan) {
               startCooldown(attempt);
               failures.push({ provider: attempt.provider, model: attempt.model, why });
@@ -835,8 +974,10 @@ export async function POST(request) {
   });
 }
 
-export function GET() {
-  return new Response(JSON.stringify(catalog()), {
-    headers: { "content-type": "application/json", "cache-control": "public, max-age=60" },
+export function GET(request) {
+  const owner = isOwner(request);
+  return new Response(JSON.stringify(catalog({ owner })), {
+    // The owner's list includes Claude, so it must never be cached for anyone else.
+    headers: { "content-type": "application/json", "cache-control": owner ? "private, no-store" : "public, max-age=60", vary: "authorization" },
   });
 }
