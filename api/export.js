@@ -1,7 +1,7 @@
 // POST /api/export  { format: "docx" | "pdf" | "xlsx" | "pptx", spec: {...} }  ->  the file as a download.
 //
 // Open to everyone: the file is built from content the visitor already has in their chat, nothing is
-// stored, and no Drive, account, or secret is involved. Abuse is limited by size caps (see _files.js),
+// stored, and no account or secret is involved. Abuse is limited by size caps (see _files.js),
 // a request body limit, and a best-effort per-instance rate limit.
 
 import { FORMATS, FileSpecError, fileName, normalizeSpec } from "./_files.js";

@@ -199,12 +199,15 @@ export function runFileTool(name, rawArgs) {
 // Does this message ask for a file? (Only then are the file tools offered.)
 // ---------------------------------------------------------------------------
 
-const VERBS = /\b(draft|write|create|make|prepare|generate|produce|compose|build|put together|turn|convert|export|format|redo|rewrite)\b/i;
+const VERBS = /\b(draft|write|create|make|prepare|generate|produce|compose|build|put together|turn|convert|export|format|redo|rewrite|give me|send me|need|want)\b/i;
 const NOUNS =
-  /\b(document|doc|docx|word file|letter|cover letter|report|proposal|resume|r[eé]sum[eé]|cv|memo|contract|agreement|invoice|minutes|policy|brief|essay|spreadsheet|excel|xlsx|budget sheet|slides?|slide deck|presentation|powerpoint|pptx|deck|pdf)\b/i;
-const DIRECT = /\b(download(able)?|docx|xlsx|pptx|as a pdf|as pdf|as a word|as an excel|in word|in excel|in powerpoint)\b/i;
+  /\b(document|doc|docs|docx|letter|cover letter|report|proposal|resume|r[eé]sum[eé]|cv|memo|contract|agreement|invoice|minutes|policy|brief|essay|plan|business plan|outline|itinerary|agenda|schedule|newsletter|certificate|quotation|brochure|flyer|spreadsheet|excel|xlsx|budget sheet|slides?|slide deck|presentation|powerpoint|pptx|deck)\b/i;
+// A file format named on its own is a clear ask ("make a PDF of this", "in Word", "as an Excel file").
+const FORMATS_NAMED =
+  /\b(pdf|docx|xlsx|pptx|powerpoint|excel|spreadsheet|slide deck|(ms|microsoft) word|word (doc|document|file)|(in|as|to|into) word)\b/i;
+const DIRECT = /\b(download(able)?|export|printable|print[- ]ready)\b/i;
 
 export function looksLikeFileRequest(message) {
   const t = String(message || "").slice(0, 2000);
-  return DIRECT.test(t) || (VERBS.test(t) && NOUNS.test(t));
+  return DIRECT.test(t) || FORMATS_NAMED.test(t) || (VERBS.test(t) && NOUNS.test(t));
 }

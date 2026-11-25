@@ -908,16 +908,6 @@ svg.lucide {
   }
 }
 
-/* ---- Google Drive ---- */
-.drive-btn[hidden],
-#drive-toggle[hidden] {
-  display: none;
-}
-
-.drive-btn.is-on {
-  color: var(--accent);
-}
-
 .cards {
   display: flex;
   flex-wrap: wrap;

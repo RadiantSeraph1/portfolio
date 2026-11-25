@@ -1,4 +1,4 @@
-// Owner sign-in shared by the sync, Google and chat endpoints.
+// Owner sign-in for the chat sync endpoint.
 // A signed session token ("owner.<expiry>.<signature>") is issued by POST /api/sync?action=login
 // and sent back as "Authorization: Bearer <token>". Only someone who knows OWNER_PASSWORD gets one.
 
