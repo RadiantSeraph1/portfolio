@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#14120f" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='32' fill='%23d9a441'/%3E%3Ctext x='32' y='41' font-family='monospace' font-size='26' font-weight='700' text-anchor='middle' fill='white'%3ESM%3C/text%3E%3C/svg%3E"
+    />
+    <title>Projects | Samuel Maclar</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/dashboard/dashboard.css" />
+    <script>
+      try {
+        const t = localStorage.getItem("samuel-portfolio-theme");
+        if (t) document.documentElement.dataset.theme = t;
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Samuel Maclar home">
+        <span class="brand-mark">SM</span>
+        <span>Projects</span>
+      </a>
+      <div class="topbar-actions" id="topbar-actions" hidden>
+        <a class="btn ghost" href="/ai"><i data-lucide="message-square"></i><span>AI chat</span></a>
+        <button class="btn ghost icon-only" id="theme-toggle" type="button" aria-label="Toggle theme"><i data-lucide="sun"></i></button>
+        <button class="btn ghost icon-only" id="sign-out" type="button" aria-label="Sign out" title="Sign out on this device"><i data-lucide="log-out"></i></button>
+      </div>
+    </header>
+
+    <!-- Sign in -->
+    <main class="signin" id="signin" hidden>
+      <form class="card signin-card" id="signin-form">
+        <span class="brand-mark big">SM</span>
+        <h1>Project dashboard</h1>
+        <p class="muted">Private to the site owner. Sign in with your sync password.</p>
+        <label for="password">Password</label>
+        <input id="password" type="password" autocomplete="current-password" required />
+        <p class="form-error" id="signin-error" role="alert" hidden></p>
+        <button class="btn primary wide" type="submit" id="signin-submit">Sign in</button>
+      </form>
+    </main>
+
+    <!-- Dashboard -->
+    <main class="dash" id="dash" hidden>
+      <section class="stats" id="stats" aria-label="Summary"></section>
+
+      <section class="toolbar">
+        <div class="search">
+          <i data-lucide="search"></i>
+          <input id="search" type="search" placeholder="Search projects, tags, tasks" aria-label="Search projects" />
+        </div>
+        <div class="filters" id="filters" role="tablist" aria-label="Filter by status"></div>
+        <select id="sort" aria-label="Sort projects">
+          <option value="priority">Sort: Priority</option>
+          <option value="updated">Sort: Recently updated</option>
+          <option value="activity">Sort: GitHub activity</option>
+          <option value="progress">Sort: Progress</option>
+          <option value="name">Sort: Name</option>
+        </select>
+        <div class="toolbar-actions">
+          <button class="btn ghost" id="import" type="button"><i data-lucide="download"></i><span>Import from portfolio</span></button>
+          <button class="btn primary" id="new-project" type="button"><i data-lucide="plus"></i><span>New project</span></button>
+        </div>
+      </section>
+
+      <p class="sync-note muted" id="sync-note" aria-live="polite"></p>
+      <section class="grid" id="grid" aria-label="Projects"></section>
+      <div class="empty card" id="empty" hidden>
+        <h2>No projects yet</h2>
+        <p class="muted">Import the projects from your portfolio page, or add one yourself.</p>
+        <div class="empty-actions">
+          <button class="btn primary" type="button" data-action="import"><i data-lucide="download"></i><span>Import from portfolio</span></button>
+          <button class="btn ghost" type="button" data-action="new"><i data-lucide="plus"></i><span>New project</span></button>
+        </div>
+      </div>
+    </main>
+
+    <!-- Editor -->
+    <dialog class="editor" id="editor" aria-labelledby="ed-title-label">
+      <form method="dialog" class="editor-inner" id="editor-form">
+        <header class="editor-head">
+          <input class="ed-title" id="ed-name" placeholder="Project name" aria-label="Project name" required maxlength="120" />
+          <span class="save-state muted" id="save-state" aria-live="polite"></span>
+          <button class="btn ghost icon-only" type="button" id="ed-close" aria-label="Close"><i data-lucide="x"></i></button>
+        </header>
+        <span id="ed-title-label" hidden>Edit project</span>
+
+        <div class="ed-grid">
+          <label>Type<input id="ed-kind" maxlength="60" placeholder="e.g. Security Platform" /></label>
+          <label>Status
+            <select id="ed-status">
+              <option value="idea">Idea</option>
+              <option value="building">Building</option>
+              <option value="live">Live</option>
+              <option value="paused">Paused</option>
+              <option value="done">Done</option>
+            </select>
+          </label>
+          <label>Priority
+            <select id="ed-priority">
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+          <label class="span-2">Progress <span id="ed-progress-value" class="muted"></span>
+            <input id="ed-progress" type="range" min="0" max="100" step="5" />
+          </label>
+          <label>Live URL<input id="ed-url" type="url" placeholder="https://…" maxlength="500" /></label>
+          <label>GitHub repo<input id="ed-repo" placeholder="owner/repo" maxlength="201" /></label>
+          <label class="span-2">Tags<input id="ed-tags" placeholder="Comma separated" /></label>
+          <label class="span-3">Next action<input id="ed-next" placeholder="The very next step" maxlength="300" /></label>
+          <label class="span-3">Summary<textarea id="ed-summary" rows="2" maxlength="600"></textarea></label>
+        </div>
+
+        <section class="ed-section">
+          <h3>Tasks <span class="muted" id="ed-task-count"></span></h3>
+          <ul class="tasks" id="ed-tasks"></ul>
+          <div class="task-add">
+            <input id="ed-task-input" placeholder="Add a task and press Enter" maxlength="300" aria-label="New task" />
+          </div>
+        </section>
+
+        <section class="ed-section">
+          <h3>Notes</h3>
+          <textarea id="ed-notes" rows="7" placeholder="Ideas, decisions, links… (Markdown is fine)" maxlength="20000"></textarea>
+        </section>
+
+        <section class="ed-section gh-section" id="ed-github" hidden></section>
+
+        <footer class="editor-foot">
+          <button class="btn danger ghost" type="button" id="ed-delete"><i data-lucide="trash-2"></i><span>Delete</span></button>
+          <span class="spacer"></span>
+          <button class="btn claude" type="button" id="ed-claude"><i data-lucide="sparkles"></i><span>Ask Claude about this</span></button>
+        </footer>
+      </form>
+    </dialog>
+
+    <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+    <script src="/dashboard/dashboard.js"></script>
+  </body>
+</html>
