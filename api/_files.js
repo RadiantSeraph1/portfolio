@@ -31,6 +31,25 @@ const LIMITS = {
 
 export class FileSpecError extends Error {}
 
+// Side-notes a chat model tacks on after an answer ("how to save this as a PDF", "press the Download
+// button", "all facts verified against cited sources"). They are not part of a document, so a reply that
+// is exported as one loses them.
+const CHATTER =
+  /(save (this|the|it)\b[^.\n]{0,40}\bas a (pdf|word)|press the download button|download button under|how to save|export as pdf|print\s*(\u2192|->)\s*save as pdf|paste (it |them |this )?(in|into) (any |a |your )?(markdown|google doc|word)|copy the entire content|file generation|base64|make this a pdf|all facts verified|no unverified claims|verified against (the )?cited)/i;
+const isRule = (block) => /^\s*([-*_]\s*){3,}\s*$/.test(block);
+
+/** Remove trailing chat side-notes (and the rules above them) from Markdown meant to become a document. */
+export function stripChatter(markdown) {
+  const blocks = String(markdown).split(/\n{2,}/);
+  let end = blocks.length;
+  while (end > 1 && (isRule(blocks[end - 1]) || CHATTER.test(blocks[end - 1]))) end--;
+  while (end > 1 && isRule(blocks[end - 1])) end--;
+  if (end === blocks.length) return markdown;
+  const kept = blocks.slice(0, end).join("\n\n");
+  // Safety net: never throw away most of a document because of a keyword.
+  return kept.trim().length >= markdown.trim().length * 0.4 ? kept : markdown;
+}
+
 const text = (value, max) => String(value ?? "").replace(/\r\n?/g, "\n").slice(0, max);
 
 function cleanTitle(title, fallback) {
@@ -43,10 +62,10 @@ export function normalizeSpec(spec) {
   if (!spec || typeof spec !== "object") throw new FileSpecError("Missing file content.");
 
   if (spec.type === "document") {
-    const markdown = text(spec.markdown, LIMITS.markdown + 1);
-    if (!markdown.trim()) throw new FileSpecError("The document is empty.");
-    if (markdown.length > LIMITS.markdown) throw new FileSpecError(`The document is too long (max ${LIMITS.markdown} characters).`);
-    return { type: "document", title: cleanTitle(spec.title, "Document"), markdown };
+    const raw = text(spec.markdown, LIMITS.markdown + 1);
+    if (!raw.trim()) throw new FileSpecError("The document is empty.");
+    if (raw.length > LIMITS.markdown) throw new FileSpecError(`The document is too long (max ${LIMITS.markdown} characters).`);
+    return { type: "document", title: cleanTitle(spec.title, "Document"), markdown: stripChatter(raw) };
   }
 
   if (spec.type === "spreadsheet") {

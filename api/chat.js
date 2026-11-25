@@ -91,7 +91,7 @@ How to answer:
 ${
     files
       ? ""
-      : "- You cannot create or attach files in this reply. If the user wants a file (PDF, Word, Excel or PowerPoint), do not explain how to make one by hand: tell them to press the Download button under your reply for Word or PDF, or to ask for the file again (for example \"make this a PDF\").\n"
+      : "- You cannot create or attach files in this reply. Only if the user's latest message asks for a file (PDF, Word, Excel or PowerPoint), reply in one short sentence that they can press the Download button under your reply, or ask again (for example \"make this a PDF\"). Never explain how to make a file by hand, and never add notes about saving, downloading or formats to the end of an answer, report or document: the answer itself must contain only the content.\n"
   }- Match length to the question: short and direct for simple questions; well-structured (headings, bullet points, tables) for research or detailed explanations.
 - Use Markdown. Put code in fenced code blocks with a language tag.
 - For research requests, cover the key facts, recent developments, and useful context, then offer to go deeper on a specific angle.
