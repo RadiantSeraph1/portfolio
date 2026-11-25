@@ -369,6 +369,24 @@ function catalog() {
   return { providers };
 }
 
+// A model that just timed out, was rate-limited or errored is tried last for a while, so one
+// overloaded model doesn't add a long wait to every message. (Per warm serverless instance.)
+const COOLDOWN_MS = 90_000;
+const cooling = new Map();
+const modelKey = (a) => `${a.provider}:${a.model}`;
+const isCooling = (a) => (cooling.get(modelKey(a)) || 0) > Date.now();
+const startCooldown = (a) => {
+  cooling.set(modelKey(a), Date.now() + COOLDOWN_MS);
+  if (cooling.size > 200) cooling.clear();
+};
+const shouldCool = (status) => status === 429 || status >= 500;
+
+/** Models that are cooling down move to the back, unless the user picked that one on purpose. */
+function demoteCooling(chain, explicit) {
+  const ready = chain.filter((a) => a === explicit || !isCooling(a));
+  return [...ready, ...chain.filter((a) => a !== explicit && isCooling(a))];
+}
+
 /** Put the user's chosen model first (if it is available); the rest stay as fallbacks. */
 function applyChoice(chain, body) {
   const { provider, model } = body || {};
@@ -480,6 +498,8 @@ export async function POST(request) {
   const problem = validate(body);
   if (problem) return json(400, { error: problem });
   chain = applyChoice(chain, body);
+  const explicit = chain[0] && chain[0].provider === body.provider && chain[0].model === body.model ? chain[0] : null;
+  chain = demoteCooling(chain, explicit);
 
   const wantSearch = body.search !== false;
   const history = recentHistory(body.messages);
@@ -578,6 +598,7 @@ export async function POST(request) {
               console.warn(`${label} failed with ${res.status}:`, raw);
               trace.push(`${label}=${res.status}${reason ? `(${reason})` : ""}`);
               if (res.status === 429) sawBusy = true;
+              if (shouldCool(res.status)) startCooldown(attempt);
               if (isKeyProblem(res.status, reason)) deadProviders.add(attempt.provider);
               continue;
             }
@@ -619,6 +640,7 @@ export async function POST(request) {
           } catch (err) {
             if (request.signal?.aborted) break;
             const why = timer.signal.aborted ? "timeout" : "error";
+            if (!sentText) startCooldown(attempt);
             console.warn(`${label} ${why}:`, err?.message);
             trace.push(`${label}=${why}`);
             if (sentText) {
