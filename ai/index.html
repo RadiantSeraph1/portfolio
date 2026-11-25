@@ -43,6 +43,7 @@
         <nav class="chat-list" aria-label="Previous chats"></nav>
         <div class="sidebar-bottom">
           <button class="side-link sync-btn" id="sync-btn" type="button"><i data-lucide="cloud-off"></i><span>Sync chats</span></button>
+          <button class="side-link drive-btn" id="drive-btn" type="button" hidden><i data-lucide="hard-drive"></i><span>Connect Google Drive</span></button>
           <a class="side-link" href="/"><i data-lucide="arrow-left"></i><span>Back to portfolio</span></a>
           <button class="side-link theme-toggle" type="button"><i data-lucide="sun"></i><span>Theme</span></button>
         </div>
@@ -83,6 +84,10 @@
                   <i data-lucide="cpu"></i>
                   <select id="model-select" aria-label="AI model and provider"></select>
                 </label>
+                <button class="tool-toggle" id="drive-toggle" type="button" aria-pressed="true" hidden title="Let the AI use your Google Drive">
+                  <i data-lucide="hard-drive"></i>
+                  <span>Drive</span>
+                </button>
                 <button class="tool-toggle" id="search-toggle" type="button" aria-pressed="true" title="Let the AI search the web for current information">
                   <i data-lucide="globe"></i>
                   <span>Web search</span>

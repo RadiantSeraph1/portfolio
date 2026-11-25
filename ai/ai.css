@@ -907,3 +907,82 @@ svg.lucide {
     max-width: none;
   }
 }
+
+/* ---- Google Drive ---- */
+.drive-btn[hidden],
+#drive-toggle[hidden] {
+  display: none;
+}
+
+.drive-btn.is-on {
+  color: var(--accent);
+}
+
+.cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.file-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  max-width: 100%;
+  padding: 0.6rem 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.file-card:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.file-card svg.lucide {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  color: var(--accent);
+}
+
+.file-card span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.file-card strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.92rem;
+}
+
+.file-card small {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  top: 1rem;
+  z-index: 50;
+  max-width: min(92vw, 28rem);
+  padding: 0.7rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  transform: translateX(-50%);
+}
+
+.toast.error {
+  border-color: #cf6a4c;
+}
