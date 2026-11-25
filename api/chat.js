@@ -11,7 +11,9 @@
 //   {"type":"status","value":"thinking" | "searching"}
 //   {"type":"text","value":"..."}            (answer text, in pieces)
 //   {"type":"sources","value":[{title,url}]}  (web pages used, if any)
-//   {"type":"model","value":{provider,model}} (which model actually answered)
+//   {"type":"model","value":{provider,model,searched,failed:[{provider,model,why}]}}
+//                                             (which model answered, whether it could search,
+//                                              and which earlier choices failed)
 //   {"type":"card","value":{kind,title,url}}  (a Google file that was created or updated)
 //   {"type":"error","value":"..."}           (something went wrong mid-reply)
 //
@@ -424,6 +426,13 @@ const startCooldown = (a) => {
 };
 const shouldCool = (status) => status === 429 || status >= 500;
 
+/** With web search on, models that can search go first (after an explicit pick), so a fallback keeps search. */
+function preferSearch(chain, explicit) {
+  const canSearch = (a) => PROVIDERS[a.provider].supportsSearch(a.model);
+  const rest = chain.filter((a) => a !== explicit);
+  return [...chain.filter((a) => a === explicit), ...rest.filter(canSearch), ...rest.filter((a) => !canSearch(a))];
+}
+
 /** Models that are cooling down move to the back, unless the user picked that one on purpose. */
 function demoteCooling(chain, explicit) {
   const ready = chain.filter((a) => a === explicit || !isCooling(a));
@@ -542,6 +551,8 @@ export async function POST(request) {
   if (problem) return json(400, { error: problem });
   chain = applyChoice(chain, body);
   const explicit = chain[0] && chain[0].provider === body.provider && chain[0].model === body.model ? chain[0] : null;
+  const wantSearch = body.search !== false;
+  if (wantSearch) chain = preferSearch(chain, explicit);
   chain = demoteCooling(chain, explicit);
 
   // Drive tools: owner only, Google connected, and only models that can call tools.
@@ -555,7 +566,6 @@ export async function POST(request) {
     }
   }
 
-  const wantSearch = body.search !== false;
   const history = recentHistory(body.messages);
   const started = Date.now();
   const encoder = new TextEncoder();
@@ -613,6 +623,7 @@ export async function POST(request) {
       let blocked = false;
       let sawBusy = false;
       let toolsRan = false;
+      const failures = []; // models that were tried first but did not answer, and why
       const cards = [];
       const deadProviders = new Set(); // providers whose key was rejected
       const isKeyProblem = (status, reason) =>
@@ -649,6 +660,7 @@ export async function POST(request) {
                 console.warn(`${label} rejected request, retrying plain:`, raw);
                 trace.push(`${label}=400(${reason})`);
                 if (isKeyProblem(400, reason)) {
+                  failures.push({ provider: attempt.provider, model: attempt.model, why: "key" });
                   deadProviders.add(attempt.provider);
                   if (toolsRan) throw new Error("provider rejected the follow-up request");
                   continue attempts;
@@ -663,6 +675,7 @@ export async function POST(request) {
                 if (res.status === 429) sawBusy = true;
                 if (shouldCool(res.status)) startCooldown(attempt);
                 if (isKeyProblem(res.status, reason)) deadProviders.add(attempt.provider);
+                failures.push({ provider: attempt.provider, model: attempt.model, why: String(res.status) });
                 if (toolsRan) throw new Error(`provider failed after tools ran (${res.status})`);
                 continue attempts;
               }
@@ -735,13 +748,14 @@ export async function POST(request) {
               if (!sentText) {
                 // Finished without an answer: refused/blocked, or empty. Try the next model.
                 trace.push(`${label}=${state.blocked ? "blocked" : "empty"}`);
+                failures.push({ provider: attempt.provider, model: attempt.model, why: state.blocked ? "blocked" : "empty" });
                 if (state.blocked) blocked = true;
                 if (toolsRan) throw new Error("empty reply after tools ran");
                 continue attempts;
               }
 
               trace.push(`${label}=ok`);
-              send("model", { provider: attempt.provider, model: attempt.model });
+              send("model", { provider: attempt.provider, model: attempt.model, searched: search, failed: failures.slice(-3) });
               if (state.cutOff) {
                 send("text", "\n\n_(The answer was cut off because it reached the length limit. Ask me to continue.)_");
               }
@@ -751,7 +765,7 @@ export async function POST(request) {
             }
             if (answered || toolsRan) {
               if (!answered) {
-                send("model", { provider: attempt.provider, model: attempt.model });
+                send("model", { provider: attempt.provider, model: attempt.model, searched: false, failed: failures.slice(-3) });
                 answered = true;
               }
               break;
@@ -759,7 +773,10 @@ export async function POST(request) {
           } catch (err) {
             if (request.signal?.aborted) break;
             const why = timer?.signal.aborted ? "timeout" : "error";
-            if (!sentText && !toolsRan) startCooldown(attempt);
+            if (!sentText && !toolsRan) {
+              startCooldown(attempt);
+              failures.push({ provider: attempt.provider, model: attempt.model, why });
+            }
             console.warn(`${label} ${why}:`, err?.message);
             trace.push(`${label}=${why}`);
             if (sentText || toolsRan) {

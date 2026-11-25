@@ -986,3 +986,7 @@ svg.lucide {
 .toast.error {
   border-color: #cf6a4c;
 }
+
+.model-note.warn {
+  color: #cf6a4c;
+}

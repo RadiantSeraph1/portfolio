@@ -302,12 +302,26 @@
     if (isLast) actions.append(actionBtn("refresh-cw", "Regenerate response", () => regenerate()));
     if (message.model) {
       const note = document.createElement("span");
-      note.className = "model-note";
+      note.className = `model-note${/fallback|no web search/.test(message.model) ? " warn" : ""}`;
       note.textContent = message.model;
       actions.append(note);
     }
     content.append(actions);
     icons();
+  }
+
+  const WHY = { timeout: "timed out", 429: "is rate-limited", key: "rejected the key", empty: "gave no answer", blocked: "declined" };
+
+  /** "Provider · model", plus why a fallback happened and whether web search was unavailable. */
+  function describeAnswer(by) {
+    let text = `${providerLabels[by.provider] || by.provider} · ${shortModel(by.model)}`;
+    const failed = (by.failed || []).find((f) => selectedModel && f.provider === selectedModel.provider && f.model === selectedModel.model) || by.failed?.[0];
+    if (failed) {
+      const why = WHY[failed.why] || (Number(failed.why) >= 500 ? "is unavailable" : "failed");
+      text += ` (fallback: ${shortModel(failed.model)} ${why})`;
+    }
+    if (searchOn && by.searched === false) text += " · no web search";
+    return text;
   }
 
   function actionBtn(icon, label, onClick) {
@@ -736,11 +750,7 @@
       const message = { role: "assistant", content: answer };
       if (sources.length) message.sources = sources;
       if (cards.length) message.cards = cards;
-      if (answeredBy) {
-        const name = `${providerLabels[answeredBy.provider] || answeredBy.provider} · ${shortModel(answeredBy.model)}`;
-        const fellBack = selectedModel && (selectedModel.provider !== answeredBy.provider || selectedModel.model !== answeredBy.model);
-        message.model = fellBack ? `${name} (fallback)` : name;
-      }
+      if (answeredBy) message.model = describeAnswer(answeredBy);
       chat.messages.push(message);
       chat.updated = Date.now();
       if (current === chat) finishAssistant(bubble, message, { isLast: true });
