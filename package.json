@@ -6,6 +6,10 @@
     "node": ">=20"
   },
   "dependencies": {
-    "marked": "15.0.12"
+    "docx": "^9.16.0",
+    "exceljs": "^4.4.0",
+    "marked": "15.0.12",
+    "pdf-lib": "^1.17.1",
+    "pptxgenjs": "^3.12.0"
   }
 }
