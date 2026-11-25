@@ -1,10 +1,14 @@
 // Vercel serverless function: POST /api/chat
 // Body: { messages: [{ role: "user" | "assistant", content: string }, ...], search?: boolean }
 //
+// GET /api/chat returns the models that are available: { providers: [{ id, label, models: [{ id, search }] }] }.
+// POST also accepts optional { provider, model } to try that model first (the rest remain as fallbacks).
+//
 // Streams newline-delimited JSON events back to the browser:
 //   {"type":"status","value":"thinking" | "searching"}
 //   {"type":"text","value":"..."}            (answer text, in pieces)
 //   {"type":"sources","value":[{title,url}]}  (web pages used, if any)
+//   {"type":"model","value":{provider,model}} (which model actually answered)
 //   {"type":"error","value":"..."}           (something went wrong mid-reply)
 //
 // Environment variables (set them in the Vercel project settings). At least one key is required:
@@ -349,6 +353,31 @@ const PROVIDERS = {
   vertex: { call: callVertex, handle: handleGeminiChunk, supportsSearch: () => true },
 };
 
+const PROVIDER_LABELS = { nvidia: "NVIDIA NIM", groq: "Groq", vertex: "Google Vertex AI", gemini: "Google Gemini" };
+
+/** What the model picker shows: only providers whose key is configured. No secrets. */
+function catalog() {
+  const providers = [];
+  for (const attempt of buildChain()) {
+    let entry = providers.find((p) => p.id === attempt.provider);
+    if (!entry) {
+      entry = { id: attempt.provider, label: PROVIDER_LABELS[attempt.provider] || attempt.provider, models: [] };
+      providers.push(entry);
+    }
+    entry.models.push({ id: attempt.model, search: PROVIDERS[attempt.provider].supportsSearch(attempt.model) });
+  }
+  return { providers };
+}
+
+/** Put the user's chosen model first (if it is available); the rest stay as fallbacks. */
+function applyChoice(chain, body) {
+  const { provider, model } = body || {};
+  if (typeof provider !== "string" || typeof model !== "string") return chain;
+  const index = chain.findIndex((a) => a.provider === provider && a.model === model);
+  if (index <= 0) return chain;
+  return [chain[index], ...chain.slice(0, index), ...chain.slice(index + 1)];
+}
+
 // ---------------------------------------------------------------------------
 // Shared streaming helpers
 // ---------------------------------------------------------------------------
@@ -431,7 +460,7 @@ function withTimeout(parent, ms) {
 }
 
 export async function POST(request) {
-  const chain = buildChain();
+  let chain = buildChain();
   if (!chain.length) {
     return json(500, { error: "The AI service is not configured yet." });
   }
@@ -450,6 +479,7 @@ export async function POST(request) {
 
   const problem = validate(body);
   if (problem) return json(400, { error: problem });
+  chain = applyChoice(chain, body);
 
   const wantSearch = body.search !== false;
   const history = recentHistory(body.messages);
@@ -579,6 +609,7 @@ export async function POST(request) {
             }
 
             trace.push(`${label}=ok`);
+            send("model", { provider: attempt.provider, model: attempt.model });
             if (state.cutOff) {
               send("text", "\n\n_(The answer was cut off because it reached the length limit. Ask me to continue.)_");
             }
@@ -640,5 +671,7 @@ export async function POST(request) {
 }
 
 export function GET() {
-  return json(405, { error: "Use POST" });
+  return new Response(JSON.stringify(catalog()), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=60" },
+  });
 }

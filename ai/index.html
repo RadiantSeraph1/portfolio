@@ -78,10 +78,16 @@
           <div class="composer-box">
             <textarea id="input" rows="1" placeholder="Ask anything" aria-label="Message" maxlength="8000"></textarea>
             <div class="composer-row">
-              <button class="tool-toggle" id="search-toggle" type="button" aria-pressed="true" title="Let the AI search the web for current information">
-                <i data-lucide="globe"></i>
-                <span>Web search</span>
-              </button>
+              <div class="composer-tools">
+                <label class="model-picker" id="model-picker" hidden>
+                  <i data-lucide="cpu"></i>
+                  <select id="model-select" aria-label="AI model and provider"></select>
+                </label>
+                <button class="tool-toggle" id="search-toggle" type="button" aria-pressed="true" title="Let the AI search the web for current information">
+                  <i data-lucide="globe"></i>
+                  <span>Web search</span>
+                </button>
+              </div>
               <button class="send" type="submit" aria-label="Send message">
                 <i data-lucide="arrow-up"></i>
               </button>

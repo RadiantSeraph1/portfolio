@@ -826,3 +826,84 @@ svg.lucide {
   .sidebar { transition: none; }
   .typing span { animation: none; }
 }
+
+/* ---- Model picker ---- */
+.composer-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.model-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+  padding: 0 0.35rem 0 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+}
+
+.model-picker[hidden] {
+  display: none;
+}
+
+.model-picker svg.lucide {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.model-picker:hover,
+.model-picker:focus-within {
+  color: var(--text);
+}
+
+.model-picker select {
+  max-width: 16rem;
+  padding: 0.35rem 0.4rem 0.35rem 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.model-picker select option,
+.model-picker select optgroup {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.tool-toggle.unavailable {
+  opacity: 0.55;
+}
+
+.model-note {
+  align-self: center;
+  margin-left: 0.25rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+@media (max-width: 520px) {
+  .composer-tools {
+    flex: 1;
+  }
+
+  .model-picker {
+    flex: 1 1 100%;
+  }
+
+  .model-picker select {
+    flex: 1;
+    min-width: 0;
+    max-width: none;
+  }
+}
