@@ -26,5 +26,3 @@ No setup, no accounts, nothing stored on the server.
   PowerPoint files keep all characters.
 - **Spreadsheet safety:** numbers stay numbers and simple formulas such as `=SUM(B2:B10)` stay live. Any
   other text that starts with `=` (for example `=HYPERLINK(...)`) is stored as plain text, never as a formula.
-- This is independent of the Google Drive feature. Drive is optional and still owner-only; this works for
-  every visitor.

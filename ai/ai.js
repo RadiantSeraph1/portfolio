@@ -5,7 +5,6 @@
   const MAX_SAVED_CHATS = 200;
   const SYNC_TOKEN_KEY = "radiant-ai-sync-token";
   const SYNC_STATE_KEY = "radiant-ai-sync-state";
-  const DRIVE_KEY = "radiant-ai-drive";
 
   const $ = (sel) => document.querySelector(sel);
   const root = document.documentElement;
@@ -21,8 +20,6 @@
   const titleEl = $(".chat-title");
   const themeToggle = $(".theme-toggle");
   const searchToggle = $("#search-toggle");
-  const driveBtn = $("#drive-btn");
-  const driveToggle = $("#drive-toggle");
   const modelPicker = $("#model-picker");
   const modelSelect = $("#model-select");
 
@@ -97,16 +94,6 @@
   function applyModelNote() {
     const limited = Boolean(selectedModel && !selectedModel.search);
     searchToggle.classList.toggle("unavailable", limited);
-    const noTools = Boolean(selectedModel && !selectedModel.tools);
-    driveToggle.classList.toggle("unavailable", noTools);
-    driveToggle.title = noTools
-      ? "This model can't use Google Drive. Pick Auto or an NVIDIA or Groq model."
-      : "Let the AI use your Google Drive";
-    searchToggle.title = limited
-      ? "This model can't browse the web. Pick Auto or a model marked 'web' to search."
-      : searchOn
-        ? "Web search is on: the AI can look up current information"
-        : "Web search is off";
   }
 
   async function loadModels() {
@@ -124,7 +111,6 @@
         for (const m of p.models) {
           const opt = new Option(`${p.label} · ${shortModel(m.id)}${m.search ? " · web" : ""}`, `${p.id}|${m.id}`);
           opt.dataset.search = m.search ? "1" : "";
-          opt.dataset.tools = m.tools ? "1" : "";
           modelSelect.append(opt);
         }
       }
@@ -149,7 +135,7 @@
     } else {
       const [provider, ...rest] = value.split("|");
       const opt = modelSelect.selectedOptions[0];
-      selectedModel = { provider, model: rest.join("|"), search: Boolean(opt?.dataset.search), tools: Boolean(opt?.dataset.tools) };
+      selectedModel = { provider, model: rest.join("|"), search: Boolean(opt?.dataset.search) };
     }
     try {
       localStorage.setItem(MODEL_KEY, value);
@@ -264,8 +250,8 @@
     const label =
       status === "searching"
         ? "Searching the web…"
-        : status === "drive"
-          ? "Working in Google Drive…"
+        : status === "tools"
+          ? "Preparing your file…"
           : status === "reconnecting"
             ? "Reconnecting…"
             : "Thinking…";
@@ -336,35 +322,13 @@
     return btn;
   }
 
-  const CARD_ICONS = { doc: "file-text", sheet: "table", slides: "presentation" };
-  const CARD_LABELS = { doc: "Google Doc", sheet: "Google Sheet", slides: "Google Slides" };
-
-  /** Links to Google files the assistant created or updated. */
+  /** Cards under a reply: downloadable files the assistant prepared. */
   function cardsEl(cards) {
     const wrap = document.createElement("div");
     wrap.className = "cards";
     for (const c of cards) {
-      if (c.kind === "file") {
-        const el = fileCardEl(c);
-        if (el) wrap.append(el);
-        continue;
-      }
-      if (!/^https:\/\/(docs|drive)\.google\.com\//.test(c.url || "")) continue;
-      const a = document.createElement("a");
-      a.className = "file-card";
-      a.href = c.url;
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-      const icon = document.createElement("i");
-      icon.dataset.lucide = CARD_ICONS[c.kind] || "file";
-      const text = document.createElement("span");
-      const title = document.createElement("strong");
-      title.textContent = String(c.title || "Untitled").slice(0, 120);
-      const kind = document.createElement("small");
-      kind.textContent = `${CARD_LABELS[c.kind] || "File"} · Open in Google Drive`;
-      text.append(title, kind);
-      a.append(icon, text);
-      wrap.append(a);
+      const el = c.kind === "file" ? fileCardEl(c) : null;
+      if (el) wrap.append(el);
     }
     return wrap;
   }
@@ -749,7 +713,6 @@
     const payload = JSON.stringify({
       messages: chat.messages.map(({ role, content }) => ({ role, content })),
       search: searchOn,
-      ...(driveActive() ? { drive: true } : {}),
       ...(selectedModel ? { provider: selectedModel.provider, model: selectedModel.model } : {}),
     });
 
@@ -768,7 +731,7 @@
         setStatus(bubble, event.value);
       } else if (event.type === "sources" && Array.isArray(event.value)) {
         sources = event.value;
-      } else if (event.type === "card" && (event.value?.url || event.value?.kind === "file")) {
+      } else if (event.type === "card" && event.value?.kind === "file") {
         cards.push(event.value);
       } else if (event.type === "model" && event.value?.model) {
         answeredBy = event.value;
@@ -800,7 +763,7 @@
         try {
           res = await fetch("/api/chat", {
             method: "POST",
-            headers: { "content-type": "application/json", ...(driveActive() ? { authorization: `Bearer ${syncToken}` } : {}) },
+            headers: { "content-type": "application/json" },
             body: payload,
             signal: attemptCtrl.signal,
           });
@@ -1103,7 +1066,6 @@
       localStorage.removeItem(SYNC_TOKEN_KEY);
     } catch {}
     renderSyncButton();
-    refreshDrive();
     if (message) alert(message);
   }
 
@@ -1142,7 +1104,6 @@
       saveSyncState();
       syncDialog.close();
       syncNow();
-      refreshDrive();
     } catch (err) {
       syncError.textContent = navigator.onLine ? err.message : "You're offline.";
       syncError.hidden = false;
@@ -1160,74 +1121,7 @@
     if (document.visibilityState === "visible") syncNow();
   }, SYNC_INTERVAL_MS);
 
-  // ---------- Google Drive (owner only) ----------
-  let drive = { configured: false, connected: false, email: "" };
-  let driveOn = true;
-  try {
-    driveOn = localStorage.getItem(DRIVE_KEY) !== "off";
-  } catch {}
-
-  /** Drive tools are only used when signed in as the owner, connected, and switched on. */
-  function driveActive() {
-    return Boolean(syncToken && drive.connected && driveOn);
-  }
-
-  function renderDrive() {
-    const signedIn = Boolean(syncToken);
-    driveBtn.hidden = !(signedIn && drive.configured);
-    driveToggle.hidden = !(signedIn && drive.connected);
-    driveToggle.setAttribute("aria-pressed", String(driveOn));
-    driveBtn.classList.toggle("is-on", drive.connected);
-    driveBtn.innerHTML = `<i data-lucide="hard-drive"></i><span>${
-      drive.connected ? `Drive connected${drive.email ? ` · ${drive.email}` : ""}` : "Connect Google Drive"
-    }</span>`;
-    driveBtn.title = drive.connected ? "Click to disconnect Google Drive" : "Let the AI use your Google Drive (owner only)";
-    icons();
-  }
-
-  async function driveApi(action, method = "GET") {
-    const res = await fetch(`/api/google?action=${action}`, { method, headers: { authorization: `Bearer ${syncToken}` } });
-    const data = await res.json().catch(() => ({}));
-    if (res.status === 401) throw new Error("Please sign in again.");
-    if (!res.ok) throw new Error(data.error || `Request failed (${res.status}).`);
-    return data;
-  }
-
-  async function refreshDrive() {
-    if (!syncToken) {
-      drive = { configured: false, connected: false, email: "" };
-      return renderDrive();
-    }
-    try {
-      drive = await driveApi("status");
-    } catch {
-      drive = { configured: false, connected: false, email: "" };
-    }
-    renderDrive();
-  }
-
-  driveBtn.addEventListener("click", async () => {
-    try {
-      if (!drive.connected) {
-        const { url } = await driveApi("connect", "POST");
-        location.href = url;
-      } else if (confirm("Disconnect Google Drive? The assistant will no longer be able to use your files.")) {
-        drive = await driveApi("disconnect", "POST");
-        renderDrive();
-      }
-    } catch (err) {
-      flash(err.message, true);
-    }
-  });
-
-  driveToggle.addEventListener("click", () => {
-    driveOn = !driveOn;
-    try {
-      localStorage.setItem(DRIVE_KEY, driveOn ? "on" : "off");
-    } catch {}
-    renderDrive();
-  });
-
+  // ---------- notices ----------
   function flash(message, isError = false) {
     const el = document.createElement("div");
     el.className = `toast${isError ? " error" : ""}`;
@@ -1235,13 +1129,6 @@
     el.textContent = message;
     document.body.append(el);
     setTimeout(() => el.remove(), 6000);
-  }
-
-  // Coming back from Google's consent screen.
-  const returned = new URLSearchParams(location.search);
-  if (returned.has("google")) {
-    flash(returned.get("google") === "connected" ? "Google Drive connected." : `Couldn't connect Google Drive. ${returned.get("reason") || ""}`, returned.get("google") !== "connected");
-    history.replaceState(null, "", location.pathname);
   }
 
   // ---------- init ----------
@@ -1252,7 +1139,6 @@
   renderThread();
   autosize();
   renderSyncButton();
-  refreshDrive();
   scheduleSync(300);
   input.focus();
 })();

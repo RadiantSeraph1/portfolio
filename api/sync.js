@@ -30,20 +30,15 @@ function json(status, body) {
   });
 }
 
-/** A file card is a Google link or a downloadable-file spec; anything else is dropped. */
+/** A file card is a downloadable-file spec; anything else is dropped. */
 function cleanCard(c) {
-  if (c?.kind === "file") {
-    try {
-      const spec = normalizeSpec(c.spec);
-      return { kind: "file", title: spec.title, spec };
-    } catch {
-      return null;
-    }
+  if (c?.kind !== "file") return null;
+  try {
+    const spec = normalizeSpec(c.spec);
+    return { kind: "file", title: spec.title, spec };
+  } catch {
+    return null;
   }
-  if (/^https:\/\/(docs|drive)\.google\.com\//.test(c?.url) && ["doc", "sheet", "slides"].includes(c?.kind)) {
-    return { kind: c.kind, title: String(c.title || "").slice(0, 200), url: c.url.slice(0, 500) };
-  }
-  return null;
 }
 
 /** Check and normalise a chat object from the browser. Returns null if invalid. */
