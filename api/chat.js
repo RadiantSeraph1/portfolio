@@ -8,16 +8,22 @@
 //   {"type":"error","value":"..."}           (something went wrong mid-reply)
 //
 // Environment variables (set them in the Vercel project settings). At least one key is required:
+//   NVIDIA_API_KEY     - NVIDIA NIM key from https://build.nvidia.com (starts with nvapi-)
+//   NVIDIA_MODEL       - optional first NVIDIA model; defaults to nvidia/nemotron-3.5-lightning-30b-a3b
 //   GROQ_API_KEY       - key from https://console.groq.com/keys
 //   GROQ_MODEL         - optional first Groq model; defaults to openai/gpt-oss-120b
 //   GEMINI_API_KEY     - key from https://aistudio.google.com (Get API key)
 //   GEMINI_MODEL       - optional first Gemini model; defaults to gemini-3.8-flash
 //   VERTEX_API_KEY     - Vertex AI express-mode key (Google Cloud console > Vertex AI)
 //   VERTEX_MODEL       - optional first Vertex model; defaults to gemini-3-flash-preview
-//   AI_PROVIDER_ORDER  - optional, e.g. "groq,vertex,gemini" (the default)
+//   AI_PROVIDER_ORDER  - optional, e.g. "nvidia,groq,vertex,gemini" (the default)
 //
 // Every provider and model has its own rate limit, so when one is busy (HTTP 429) or failing,
 // the request moves on to the next model in the chain instead of showing an error.
+
+// NVIDIA NIM hosted API (OpenAI-compatible chat completions).
+const NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
+const NVIDIA_MODELS = ["nvidia/nemotron-3.5-lightning-30b-a3b", "openai/gpt-oss-120b", "meta/llama-3.3-70b-instruct"];
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.3-70b-versatile", "llama-3.1-8b-instant"];
@@ -44,7 +50,7 @@ const RATE_WINDOW_MS = 60_000;
 const RATE_MAX_REQUESTS = 15;
 const hits = new Map();
 
-function systemPrompt(searchEnabled) {
+function systemPrompt(searchEnabled, searchWanted = false) {
   const today = new Date().toLocaleDateString("en-GB", {
     weekday: "long",
     day: "numeric",
@@ -61,7 +67,9 @@ How to answer:
 - ${
     searchEnabled
       ? "You can search the web. Only search when the answer depends on current, time-sensitive, or very specific facts (news, prices, recent events, specific companies or people). Do NOT search for general knowledge, definitions, concepts, coding, writing, or casual chat; answer those directly. When you do search, one or two well-chosen searches are usually enough."
-      : "You cannot browse the web right now. For current or very specific facts (companies, prices, news, recent events), give what you know, say it may be out of date, and suggest the user turn on web search."
+      : searchWanted
+        ? "You cannot browse the web with this model. For current or very specific facts (companies, prices, news, recent events), give what you know and say it may be out of date."
+        : "You cannot browse the web right now. For current or very specific facts (companies, prices, news, recent events), give what you know, say it may be out of date, and suggest the user turn on web search."
   }
 - Match length to the question: short and direct for simple questions; well-structured (headings, bullet points, tables) for research or detailed explanations.
 - Use Markdown. Put code in fenced code blocks with a language tag.
@@ -135,6 +143,9 @@ function unique(list) {
 /** The ordered list of {provider, model} attempts, based on which keys are configured. */
 function buildChain() {
   const chains = {
+    nvidia: process.env.NVIDIA_API_KEY
+      ? unique([process.env.NVIDIA_MODEL, ...NVIDIA_MODELS]).map((model) => ({ provider: "nvidia", model }))
+      : [],
     groq: process.env.GROQ_API_KEY
       ? unique([process.env.GROQ_MODEL, ...GROQ_MODELS]).map((model) => ({ provider: "groq", model }))
       : [],
@@ -147,6 +158,7 @@ function buildChain() {
   };
   const order = unique([
     ...(process.env.AI_PROVIDER_ORDER || "").toLowerCase().split(/[\s,]+/),
+    "nvidia",
     "groq",
     "vertex",
     "gemini",
@@ -160,10 +172,10 @@ function buildChain() {
 
 const groqSupportsSearch = (model) => model.startsWith("openai/gpt-oss");
 
-function callGroq({ model, history, search, safe, signal }) {
+function callGroq({ model, history, search, searchWanted, safe, signal }) {
   const payload = {
     model,
-    messages: [{ role: "system", content: systemPrompt(search) }, ...history],
+    messages: [{ role: "system", content: systemPrompt(search, searchWanted) }, ...history],
     stream: true,
     max_completion_tokens: MAX_OUTPUT_TOKENS,
   };
@@ -216,13 +228,13 @@ const geminiSupportsThinkingLevel = (model) => /^gemini-([3-9]|\d\d)/.test(model
 
 /** Build a call function for a Gemini endpoint (Gemini API or Vertex AI express mode). */
 function geminiCaller({ baseUrl, keyEnv, searchTool }) {
-  return function callGoogle({ model, history, search, safe, signal }) {
+  return function callGoogle({ model, history, search, searchWanted, safe, signal }) {
     const generationConfig = { maxOutputTokens: MAX_OUTPUT_TOKENS };
     // Gemini 3+ thinks by default; a low thinking level keeps replies fast.
     if (!safe && geminiSupportsThinkingLevel(model)) generationConfig.thinkingConfig = { thinkingLevel: "low" };
 
     const payload = {
-      systemInstruction: { parts: [{ text: systemPrompt(search) }] },
+      systemInstruction: { parts: [{ text: systemPrompt(search, searchWanted) }] },
       contents: history.map(({ role, content }) => ({
         role: role === "assistant" ? "model" : "user",
         parts: [{ text: content }],
@@ -269,7 +281,69 @@ function handleGeminiChunk(chunk, out) {
   if (GEMINI_BLOCKED.has(candidate.finishReason)) out.blocked = true;
 }
 
+// ---------------------------------------------------------------------------
+// NVIDIA NIM (OpenAI-compatible chat completions; no built-in web search)
+// ---------------------------------------------------------------------------
+
+function callNvidia({ model, history, searchWanted, signal }) {
+  return fetch(NVIDIA_URL, {
+    method: "POST",
+    headers: { authorization: `Bearer ${process.env.NVIDIA_API_KEY}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "system", content: systemPrompt(false, searchWanted) }, ...history],
+      stream: true,
+      max_tokens: MAX_OUTPUT_TOKENS,
+      temperature: 0.6,
+    }),
+    signal,
+  });
+}
+
+// Some reasoning models put their thinking inline between <think> and </think>; hide it.
+function visibleText(piece, out) {
+  let buf = (out.thinkBuf || "") + piece;
+  let shown = "";
+  while (buf) {
+    if (out.inThink) {
+      const end = buf.indexOf("</think>");
+      if (end === -1) {
+        buf = buf.slice(-7); // keep a possible partial closing tag
+        break;
+      }
+      buf = buf.slice(end + 8);
+      out.inThink = false;
+    } else {
+      const start = buf.indexOf("<think>");
+      if (start !== -1) {
+        shown += buf.slice(0, start);
+        buf = buf.slice(start + 7);
+        out.inThink = true;
+        continue;
+      }
+      const keep = ["<think", "<thin", "<thi", "<th", "<t", "<"].find((p) => buf.endsWith(p)) || "";
+      shown += buf.slice(0, buf.length - keep.length);
+      buf = keep;
+      break;
+    }
+  }
+  out.thinkBuf = buf;
+  return shown;
+}
+
+function handleNvidiaChunk(chunk, out) {
+  if (chunk.error) throw new Error(chunk.error.message || "stream error");
+  const choice = chunk.choices?.[0];
+  const content = choice?.delta?.content; // reasoning_content (thinking) is deliberately ignored
+  if (typeof content === "string" && content) {
+    const text = visibleText(content, out);
+    if (text) out.text(text);
+  }
+  if (choice?.finish_reason === "length") out.cutOff = true;
+}
+
 const PROVIDERS = {
+  nvidia: { call: callNvidia, handle: handleNvidiaChunk, supportsSearch: () => false },
   groq: { call: callGroq, handle: handleGroqChunk, supportsSearch: groqSupportsSearch },
   gemini: { call: callGemini, handle: handleGeminiChunk, supportsSearch: () => true },
   vertex: { call: callVertex, handle: handleGeminiChunk, supportsSearch: () => true },
@@ -330,7 +404,7 @@ async function failureReason(res) {
     } catch {
       reason = raw;
     }
-    reason = reason.replace(/\b(org|key|sk|gsk|AIza)[\w-]{6,}/g, "[redacted]").replace(/\s+/g, " ").slice(0, 120);
+    reason = reason.replace(/\b(org|key|sk|gsk|AIza|nvapi)[\w-]{6,}/g, "[redacted]").replace(/\s+/g, " ").slice(0, 120);
   }
   return { raw: raw.slice(0, 300), reason };
 }
@@ -453,7 +527,7 @@ export async function POST(request) {
           const timer = withTimeout(request.signal, ATTEMPT_CONNECT_TIMEOUT_MS);
 
           try {
-            const args = { model: attempt.model, history, signal: timer.signal };
+            const args = { model: attempt.model, history, searchWanted: wantSearch, signal: timer.signal };
             let res = await provider.call({ ...args, search, safe: false });
 
             // A 400 usually means an unsupported option (search tool or thinking setting on this
