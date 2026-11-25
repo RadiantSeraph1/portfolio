@@ -65,6 +65,7 @@ function cleanChat(chat) {
   for (const m of chat.messages) {
     if ((m?.role !== "user" && m?.role !== "assistant") || typeof m.content !== "string") return null;
     const msg = { role: m.role, content: m.content };
+    if (typeof m.model === "string") msg.model = m.model.slice(0, 120);
     if (Array.isArray(m.sources)) {
       msg.sources = m.sources
         .filter((s) => typeof s?.url === "string" && /^https?:\/\//i.test(s.url))

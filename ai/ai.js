@@ -20,6 +20,8 @@
   const titleEl = $(".chat-title");
   const themeToggle = $(".theme-toggle");
   const searchToggle = $("#search-toggle");
+  const modelPicker = $("#model-picker");
+  const modelSelect = $("#model-select");
 
   /**
    * Saved chats. Each message is {role, content} plus optional `sources` on assistant replies.
@@ -75,13 +77,77 @@
   function applySearch(on) {
     searchOn = on;
     searchToggle.setAttribute("aria-pressed", String(on));
-    searchToggle.title = on ? "Web search is on: the AI can look up current information" : "Web search is off";
+    applyModelNote();
     try {
       localStorage.setItem(SEARCH_KEY, on ? "on" : "off");
     } catch {}
   }
 
   searchToggle.addEventListener("click", () => applySearch(!searchOn));
+
+  // ---------- model picker ----------
+  /** @type {{provider: string, model: string, search: boolean} | null} null means Auto. */
+  let selectedModel = null;
+  const providerLabels = {};
+  const shortModel = (id) => id.replace(/^[^/]+\//, "");
+
+  function applyModelNote() {
+    const limited = Boolean(selectedModel && !selectedModel.search);
+    searchToggle.classList.toggle("unavailable", limited);
+    searchToggle.title = limited
+      ? "This model can't browse the web. Pick Auto or a model marked 'web' to search."
+      : searchOn
+        ? "Web search is on: the AI can look up current information"
+        : "Web search is off";
+  }
+
+  async function loadModels() {
+    try {
+      const res = await fetch("/api/chat");
+      if (!res.ok) return;
+      const { providers } = await res.json();
+      const total = (providers || []).reduce((n, p) => n + p.models.length, 0);
+      if (total < 2) return;
+
+      modelSelect.innerHTML = "";
+      modelSelect.append(new Option("Auto (best available)", ""));
+      for (const p of providers) {
+        providerLabels[p.id] = p.label;
+        for (const m of p.models) {
+          const opt = new Option(`${p.label} · ${shortModel(m.id)}${m.search ? " · web" : ""}`, `${p.id}|${m.id}`);
+          opt.dataset.search = m.search ? "1" : "";
+          modelSelect.append(opt);
+        }
+      }
+
+      let saved = "";
+      try {
+        saved = localStorage.getItem(MODEL_KEY) || "";
+      } catch {}
+      modelSelect.value = saved;
+      if (modelSelect.value !== saved) modelSelect.value = ""; // that model is no longer available
+      readModelSelect();
+      modelPicker.hidden = false;
+    } catch {
+      // The picker is optional: without it the chat simply uses Auto.
+    }
+  }
+
+  function readModelSelect() {
+    const value = modelSelect.value;
+    if (!value) {
+      selectedModel = null;
+    } else {
+      const [provider, ...rest] = value.split("|");
+      selectedModel = { provider, model: rest.join("|"), search: Boolean(modelSelect.selectedOptions[0]?.dataset.search) };
+    }
+    try {
+      localStorage.setItem(MODEL_KEY, value);
+    } catch {}
+    applyModelNote();
+  }
+
+  modelSelect.addEventListener("change", readModelSelect);
 
   // ---------- markdown ----------
   function renderMarkdown(text) {
@@ -217,6 +283,12 @@
       })
     );
     if (isLast) actions.append(actionBtn("refresh-cw", "Regenerate response", () => regenerate()));
+    if (message.model) {
+      const note = document.createElement("span");
+      note.className = "model-note";
+      note.textContent = message.model;
+      actions.append(note);
+    }
     content.append(actions);
     icons();
   }
@@ -384,6 +456,7 @@
   }
 
   const MAX_ATTEMPTS = 3;
+  const MODEL_KEY = "radiant-ai-model";
   const STALL_TIMEOUT_MS = 45_000; // the server pings every ~8s, so this much silence means a dead connection
   const RETRYABLE_STATUS = new Set([502, 503, 504]);
 
@@ -477,6 +550,7 @@
     const body = bubble.querySelector(".body");
     let answer = "";
     let sources = [];
+    let answeredBy = null;
     let streamError = null;
     let frame = 0;
 
@@ -489,6 +563,7 @@
     const payload = JSON.stringify({
       messages: chat.messages.map(({ role, content }) => ({ role, content })),
       search: searchOn,
+      ...(selectedModel ? { provider: selectedModel.provider, model: selectedModel.model } : {}),
     });
 
     const handle = (line) => {
@@ -506,6 +581,8 @@
         setStatus(bubble, event.value);
       } else if (event.type === "sources" && Array.isArray(event.value)) {
         sources = event.value;
+      } else if (event.type === "model" && event.value?.model) {
+        answeredBy = event.value;
       } else if (event.type === "error") {
         streamError = event.value;
       } else if (event.type === "debug") {
@@ -609,6 +686,11 @@
       if (streamError) answer += `\n\n_(${streamError})_`;
       const message = { role: "assistant", content: answer };
       if (sources.length) message.sources = sources;
+      if (answeredBy) {
+        const name = `${providerLabels[answeredBy.provider] || answeredBy.provider} · ${shortModel(answeredBy.model)}`;
+        const fellBack = selectedModel && (selectedModel.provider !== answeredBy.provider || selectedModel.model !== answeredBy.model);
+        message.model = fellBack ? `${name} (fallback)` : name;
+      }
       chat.messages.push(message);
       chat.updated = Date.now();
       if (current === chat) finishAssistant(bubble, message, { isLast: true });
@@ -893,6 +975,7 @@
   // ---------- init ----------
   applyTheme(root.dataset.theme === "light" ? "light" : "dark");
   applySearch(searchOn);
+  loadModels();
   renderSidebar();
   renderThread();
   autosize();
