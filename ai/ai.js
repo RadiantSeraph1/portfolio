@@ -299,6 +299,7 @@
         }
       })
     );
+    actions.append(downloadMenuBtn(message));
     if (isLast) actions.append(actionBtn("refresh-cw", "Regenerate response", () => regenerate()));
     if (message.model) {
       const note = document.createElement("span");
@@ -320,7 +321,7 @@
       const why = WHY[failed.why] || (Number(failed.why) >= 500 ? "is unavailable" : "failed");
       text += ` (fallback: ${shortModel(failed.model)} ${why})`;
     }
-    if (searchOn && by.searched === false) text += " · no web search";
+    if (searchOn && by.searched === false && !by.tools) text += " · no web search";
     return text;
   }
 
@@ -343,6 +344,11 @@
     const wrap = document.createElement("div");
     wrap.className = "cards";
     for (const c of cards) {
+      if (c.kind === "file") {
+        const el = fileCardEl(c);
+        if (el) wrap.append(el);
+        continue;
+      }
       if (!/^https:\/\/(docs|drive)\.google\.com\//.test(c.url || "")) continue;
       const a = document.createElement("a");
       a.className = "file-card";
@@ -362,6 +368,126 @@
     }
     return wrap;
   }
+
+  // ---------- downloadable files ----------
+  const FILE_FORMATS = { document: ["docx", "pdf"], spreadsheet: ["xlsx"], presentation: ["pptx"] };
+  const FORMAT_LABELS = { docx: "Word", pdf: "PDF", xlsx: "Excel", pptx: "PowerPoint" };
+  const FILE_ICONS = { document: "file-text", spreadsheet: "table", presentation: "presentation" };
+  const FILE_KINDS = { document: "Document", spreadsheet: "Spreadsheet", presentation: "Presentation" };
+
+  function saveBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
+
+  /** Ask the server to build the file, then hand it to the browser as a download. */
+  async function downloadFile(spec, format, button) {
+    const label = button?.textContent;
+    if (button) {
+      button.disabled = true;
+      button.textContent = "Preparing…";
+    }
+    try {
+      const res = await fetch("/api/export", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ format, spec }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `Download failed (${res.status}).`);
+      }
+      const named = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") || "");
+      saveBlob(await res.blob(), named?.[1] || `document.${format}`);
+    } catch (err) {
+      flash(navigator.onLine ? err.message : "You're offline.", true);
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = label;
+      }
+    }
+  }
+
+  function fileCardEl(card) {
+    const type = card.spec?.type;
+    if (!FILE_FORMATS[type]) return null;
+    const el = document.createElement("div");
+    el.className = "file-card file-download";
+    const icon = document.createElement("i");
+    icon.dataset.lucide = FILE_ICONS[type];
+    const text = document.createElement("span");
+    const title = document.createElement("strong");
+    title.textContent = String(card.title || card.spec.title || "Untitled").slice(0, 120);
+    const kind = document.createElement("small");
+    kind.textContent = `${FILE_KINDS[type]} · ready to download`;
+    text.append(title, kind);
+    const buttons = document.createElement("div");
+    buttons.className = "dl-buttons";
+    for (const format of FILE_FORMATS[type]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "dl-btn";
+      b.textContent = FORMAT_LABELS[format];
+      b.title = `Download as ${FORMAT_LABELS[format]}`;
+      b.addEventListener("click", () => downloadFile(card.spec, format, b));
+      buttons.append(b);
+    }
+    el.append(icon, text, buttons);
+    return el;
+  }
+
+  /** A reasonable file title from a reply: its first heading or first line. */
+  function titleFrom(markdown) {
+    const line = String(markdown).split("\n").map((l) => l.replace(/[#>*_`\[\]-]/g, "").trim()).find(Boolean) || "";
+    return line.slice(0, 60) || "Radiant AI reply";
+  }
+
+  /** The "Download" menu under every reply: Word and PDF (built by the server), Markdown and text (built here). */
+  function downloadMenuBtn(message) {
+    const wrap = document.createElement("div");
+    wrap.className = "dl-menu-wrap";
+    const btn = actionBtn("download", "Download this reply", () => {
+      const open = !menu.hidden;
+      document.querySelectorAll(".dl-menu").forEach((m) => (m.hidden = true));
+      menu.hidden = open;
+    });
+    const menu = document.createElement("div");
+    menu.className = "dl-menu";
+    menu.hidden = true;
+    const spec = () => ({ type: "document", title: titleFrom(message.content), markdown: message.content });
+    const items = [
+      ["Word (.docx)", (b) => downloadFile(spec(), "docx", b)],
+      ["PDF", (b) => downloadFile(spec(), "pdf", b)],
+      ["Markdown (.md)", () => saveBlob(new Blob([message.content], { type: "text/markdown" }), `${titleFrom(message.content).replace(/[^\w]+/g, "-").replace(/^-|-$/g, "") || "reply"}.md`)],
+      ["Plain text (.txt)", () => saveBlob(new Blob([message.content], { type: "text/plain" }), `${titleFrom(message.content).replace(/[^\w]+/g, "-").replace(/^-|-$/g, "") || "reply"}.txt`)],
+    ];
+    for (const [label, run] of items) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.textContent = label;
+      item.addEventListener("click", () => {
+        menu.hidden = true;
+        run(item);
+      });
+      menu.append(item);
+    }
+    wrap.append(btn, menu);
+    return wrap;
+  }
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest?.(".dl-menu-wrap")) document.querySelectorAll(".dl-menu").forEach((m) => (m.hidden = true));
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") document.querySelectorAll(".dl-menu").forEach((m) => (m.hidden = true));
+  });
 
   function sourcesEl(sources) {
     const wrap = document.createElement("div");
@@ -642,7 +768,7 @@
         setStatus(bubble, event.value);
       } else if (event.type === "sources" && Array.isArray(event.value)) {
         sources = event.value;
-      } else if (event.type === "card" && event.value?.url) {
+      } else if (event.type === "card" && (event.value?.url || event.value?.kind === "file")) {
         cards.push(event.value);
       } else if (event.type === "model" && event.value?.model) {
         answeredBy = event.value;

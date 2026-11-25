@@ -13,6 +13,7 @@
 
 import { redis, pipeline, redisConfigured } from "./_redis.js";
 import { makeToken, sameText, isOwner } from "./_owner.js";
+import { normalizeSpec } from "./_files.js";
 
 const CHATS_KEY = "sync:chats";
 const DELETED_KEY = "sync:deleted";
@@ -29,6 +30,22 @@ function json(status, body) {
   });
 }
 
+/** A file card is a Google link or a downloadable-file spec; anything else is dropped. */
+function cleanCard(c) {
+  if (c?.kind === "file") {
+    try {
+      const spec = normalizeSpec(c.spec);
+      return { kind: "file", title: spec.title, spec };
+    } catch {
+      return null;
+    }
+  }
+  if (/^https:\/\/(docs|drive)\.google\.com\//.test(c?.url) && ["doc", "sheet", "slides"].includes(c?.kind)) {
+    return { kind: c.kind, title: String(c.title || "").slice(0, 200), url: c.url.slice(0, 500) };
+  }
+  return null;
+}
+
 /** Check and normalise a chat object from the browser. Returns null if invalid. */
 function cleanChat(chat) {
   if (!chat || typeof chat !== "object") return null;
@@ -41,12 +58,7 @@ function cleanChat(chat) {
     if ((m?.role !== "user" && m?.role !== "assistant") || typeof m.content !== "string") return null;
     const msg = { role: m.role, content: m.content };
     if (typeof m.model === "string") msg.model = m.model.slice(0, 120);
-    if (Array.isArray(m.cards)) {
-      msg.cards = m.cards
-        .filter((c) => /^https:\/\/(docs|drive)\.google\.com\//.test(c?.url) && ["doc", "sheet", "slides"].includes(c?.kind))
-        .slice(0, 10)
-        .map((c) => ({ kind: c.kind, title: String(c.title || "").slice(0, 200), url: c.url.slice(0, 500) }));
-    }
+    if (Array.isArray(m.cards)) msg.cards = m.cards.slice(0, 10).map(cleanCard).filter(Boolean);
     if (Array.isArray(m.sources)) {
       msg.sources = m.sources
         .filter((s) => typeof s?.url === "string" && /^https?:\/\//i.test(s.url))
