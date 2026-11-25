@@ -125,16 +125,22 @@ export async function renderDocx(spec) {
       } else if (t.type === "hr") {
         out.push(new Paragraph({ border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: "AAAAAA", space: 1 } }, spacing: { before: 120, after: 120 } }));
       } else if (t.type === "table") {
-        const cell = (c, header) =>
+        const cell = (c, header, width) =>
           new TableCell({
+            width: width ? { size: width, type: WidthType.DXA } : undefined,
             children: [new Paragraph({ children: children(c.tokens, { bold: header }) })],
             shading: header ? { type: ShadingType.CLEAR, fill: "E8E8E8", color: "auto" } : undefined,
             margins: { top: 60, bottom: 60, left: 100, right: 100 },
           });
+        // Size columns by their content (as the PDF does) instead of leaving Word to guess.
+        const weights = t.header.map((h, i) => Math.max(8, Math.min(40, Math.max(String(h.text).length, ...t.rows.map((row) => String(row[i]?.text ?? "").length)))));
+        const weightSum = weights.reduce((x, y) => x + y, 0);
+        const widths = weights.map((w) => Math.round((w / weightSum) * 9026)); // A4 text width in twips
         out.push(
           new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            rows: [new TableRow({ tableHeader: true, children: t.header.map((c) => cell(c, true)) }), ...t.rows.map((r) => new TableRow({ children: r.map((c) => cell(c, false)) }))],
+            width: { size: 9026, type: WidthType.DXA },
+            columnWidths: widths,
+            rows: [new TableRow({ tableHeader: true, children: t.header.map((c, i) => cell(c, true, widths[i])) }), ...t.rows.map((row) => new TableRow({ children: row.map((c, i) => cell(c, false, widths[i])) }))],
           }),
           new Paragraph({ spacing: { after: 140 } })
         );

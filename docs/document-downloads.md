@@ -19,6 +19,7 @@ No setup, no accounts, nothing stored on the server.
   requests use NVIDIA or Groq models (they support tool calling), and web search is off for that message.
   Anything else behaves as before. The Download button on a normal reply works with every model.
 - The model is told to use `[placeholders]` instead of inventing names, employers or dates.
+- When a reply is exported as a document, trailing chat side-notes ("press the Download button", "how to save this as a PDF", "all facts verified…") are removed. Only the end of the text is checked, and nothing is removed if it would delete most of the document.
 - **Limits:** documents up to 60,000 characters; spreadsheets up to 1,000 rows x 50 columns and 5 sheets;
   presentations up to 30 slides with 12 bullets each; 20 exports per minute per visitor.
 - **PDF fonts:** PDFs use the standard PDF fonts, which cover Western European text. Other characters are
